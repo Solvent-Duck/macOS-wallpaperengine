@@ -94,10 +94,7 @@ ffmpeg / libvpx       — WebM decoding
 
 ### Scene Renderer Integration Options
 
-**Option A — Embedded C++ renderer** (recommended for v1)
-Compile linux-wallpaperengine as a static library, call from Swift via a C bridge. Render into an `IOSurface` shared with the macOS desktop window.
-
-**Option B — Renderer subprocess**
+**— Renderer subprocess**
 Run the renderer as a separate process rendering offscreen, share frames via `IOSurface` or XPC. More resilient to crashes; cleaner separation. Better long-term architecture.
 
 ---
@@ -117,6 +114,37 @@ On Apple Silicon, OpenGL runs through a Metal translation layer adding CPU overh
 
 ---
 
+## Progress
+
+### Completed
+- [x] Desktop window layer (borderless windows at desktop level, one per screen)
+- [x] Multi-monitor support (auto-rebuilds on display config changes)
+- [x] Video wallpapers — MP4/MOV/M4V via AVFoundation + AVPlayerLooper
+- [x] Web wallpapers — WKWebView with WE JS API polyfill (~20% API coverage)
+- [x] Occlusion-based pause/resume for power efficiency
+- [x] Menu bar UI (status item with pause/resume, clear, audio toggle, gallery)
+- [x] `.pkg` archive parser (WE's binary package format)
+- [x] Wallpaper project loader (directory, project.json, .pkg, bare media files)
+- [x] Cursor tracking for interactive wallpapers (normalized coordinates)
+- [x] Scene renderer stub with C bridge interface design
+- [x] CLI argument support for loading wallpapers on launch
+- [x] Audio mute/unmute toggle
+- [x] Gallery window — SwiftUI grid browser with preview thumbnails and tag filtering
+- [x] Fix: occlusion detection for desktop-level windows (macOS reports them as permanently occluded)
+
+### Remaining
+- [ ] WebM video support (ffmpeg/libvpx integration)
+- [ ] Scene wallpaper rendering (linux-wallpaperengine C++ port)
+- [ ] Per-wallpaper properties UI
+- [ ] Enhanced WE JavaScript API (~80% coverage target)
+- [ ] Audio reactivity (AVAudioEngine tap + FFT)
+- [ ] Frame rate capping (CADisplayLink/CVDisplayLink)
+- [ ] App Nap participation
+- [ ] Metal rendering backend (long-term)
+- [ ] HLSL → Metal shader translation (long-term)
+
+---
+
 ## Scope
 
 ### v1 Target
@@ -127,6 +155,7 @@ On Apple Silicon, OpenGL runs through a Metal translation layer adding CPU overh
 - `.pkg` extraction
 - Basic per-wallpaper properties UI
 - Smart pause/resume when occluded
+- Gallery window for browsing installed wallpapers
 
 ### Out of Scope
 - Application wallpapers (Windows EXEs — not feasible)
