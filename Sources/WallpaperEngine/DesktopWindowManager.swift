@@ -58,8 +58,7 @@ class DesktopWindowManager {
         case .video:
             return VideoRenderer(fileURL: fileURL)
         case .web:
-            // TODO: WebRenderer
-            throw WallpaperError.unsupportedType(.web)
+            return WebRenderer(fileURL: fileURL)
         case .scene:
             // TODO: SceneRenderer via linux-wallpaperengine
             throw WallpaperError.unsupportedType(.scene)
