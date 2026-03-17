@@ -99,8 +99,10 @@ class DesktopWindowManager {
         case .web:
             return WebRenderer(fileURL: fileURL)
         case .scene:
-            // TODO: SceneRenderer via linux-wallpaperengine
-            throw WallpaperError.unsupportedType(.scene)
+            guard let dirURL = project.directoryURL else {
+                throw WallpaperError.unsupportedType(.scene)
+            }
+            return SceneRenderer(directoryURL: dirURL)
         case .preset, .application:
             throw WallpaperError.unsupportedType(project.type)
         }
