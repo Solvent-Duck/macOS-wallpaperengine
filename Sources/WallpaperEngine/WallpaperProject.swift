@@ -55,10 +55,11 @@ enum WallpaperLoader {
 
     /// Attempt to load a wallpaper from a URL.
     ///
-    /// Handles three cases:
+    /// Handles four cases:
     /// 1. A directory containing `project.json` (standard WE layout)
     /// 2. A direct `project.json` file
-    /// 3. A bare media file (video/HTML) — wraps it in a synthetic project
+    /// 3. A `.pkg` archive (WE's packed format) — extracts then loads
+    /// 4. A bare media file (video/HTML) — wraps it in a synthetic project
     static func load(from url: URL) throws -> WallpaperProject {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
@@ -79,7 +80,13 @@ enum WallpaperLoader {
             return try loadProject(from: url, directory: url.deletingLastPathComponent())
         }
 
-        // Case 3: Bare media file — create a synthetic project
+        // Case 3: WE .pkg archive — extract to temp dir and load
+        if url.pathExtension.lowercased() == "pkg" {
+            let extractedDir = try PackageParser.extract(pkgURL: url)
+            return try load(from: extractedDir)
+        }
+
+        // Case 4: Bare media file — create a synthetic project
         return makeSyntheticProject(for: url)
     }
 
