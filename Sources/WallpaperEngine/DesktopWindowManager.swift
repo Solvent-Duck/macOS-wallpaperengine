@@ -6,10 +6,16 @@ import AppKit
 /// the display configuration changes (monitor connected/disconnected,
 /// resolution change, etc.). Routes wallpaper content to each window
 /// via a `WallpaperRenderer`.
+///
+/// Automatically pauses rendering when all desktop windows are fully
+/// occluded by other application windows, and resumes when any part
+/// of the desktop becomes visible again.
 class DesktopWindowManager {
     private var windows: [DesktopWindow] = []
     private var renderer: WallpaperRenderer?
     private var currentProject: WallpaperProject?
+    private let occlusionDetector = OcclusionDetector()
+    private var isVisible = true
 
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
@@ -44,7 +50,11 @@ class DesktopWindowManager {
 
             // Set the renderer's view as content on all desktop windows
             applyRendererToWindows()
-            newRenderer.play()
+
+            // Only start playing if the desktop is actually visible
+            if isVisible {
+                newRenderer.play()
+            }
 
         } catch {
             print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
@@ -81,6 +91,8 @@ class DesktopWindowManager {
     }
 
     private func rebuildWindows() {
+        occlusionDetector.stop()
+
         for window in windows {
             window.close()
         }
@@ -95,7 +107,25 @@ class DesktopWindowManager {
         // Re-apply the current renderer to the new windows
         applyRendererToWindows()
 
+        // Start occlusion tracking on the new windows
+        occlusionDetector.observe(windows: windows) { [weak self] visible in
+            self?.handleVisibilityChange(visible)
+        }
+
         print("[WallpaperEngine] Created \(windows.count) desktop window(s)")
+    }
+
+    private func handleVisibilityChange(_ visible: Bool) {
+        guard visible != isVisible else { return }
+        isVisible = visible
+
+        if visible {
+            renderer?.play()
+            print("[WallpaperEngine] Desktop visible — resuming renderer")
+        } else {
+            renderer?.pause()
+            print("[WallpaperEngine] Desktop fully occluded — pausing renderer")
+        }
     }
 
     @objc private func screensDidChange(_ notification: Notification) {
@@ -105,6 +135,7 @@ class DesktopWindowManager {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        occlusionDetector.stop()
         renderer?.stop()
     }
 }
