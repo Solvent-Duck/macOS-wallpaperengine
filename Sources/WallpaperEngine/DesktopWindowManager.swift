@@ -16,6 +16,10 @@ class DesktopWindowManager {
     private var currentProject: WallpaperProject?
     private let occlusionDetector = OcclusionDetector()
     private var isVisible = true
+    private var isManuallyPaused = false
+
+    /// The title of the currently loaded wallpaper, if any.
+    var currentTitle: String? { currentProject?.title }
 
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
@@ -58,6 +62,31 @@ class DesktopWindowManager {
 
         } catch {
             print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
+        }
+    }
+
+    /// Manually pause the current wallpaper.
+    func pauseWallpaper() {
+        isManuallyPaused = true
+        renderer?.pause()
+    }
+
+    /// Resume a manually paused wallpaper (still respects occlusion).
+    func resumeWallpaper() {
+        isManuallyPaused = false
+        if isVisible {
+            renderer?.play()
+        }
+    }
+
+    /// Stop and remove the current wallpaper.
+    func clearWallpaper() {
+        renderer?.stop()
+        renderer = nil
+        currentProject = nil
+        isManuallyPaused = false
+        for window in windows {
+            window.contentView = nil
         }
     }
 
@@ -119,10 +148,10 @@ class DesktopWindowManager {
         guard visible != isVisible else { return }
         isVisible = visible
 
-        if visible {
+        if visible && !isManuallyPaused {
             renderer?.play()
             print("[WallpaperEngine] Desktop visible — resuming renderer")
-        } else {
+        } else if !visible {
             renderer?.pause()
             print("[WallpaperEngine] Desktop fully occluded — pausing renderer")
         }
