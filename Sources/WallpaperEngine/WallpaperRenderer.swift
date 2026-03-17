@@ -17,4 +17,14 @@ protocol WallpaperRenderer: AnyObject {
 
     /// Stop rendering and release resources.
     func stop()
+
+    /// Update the cursor position for interactive wallpapers.
+    /// Coordinates are normalized (0.0–1.0) relative to the screen.
+    /// Default implementation is a no-op for non-interactive renderers.
+    func updateCursorPosition(_ position: NSPoint)
+}
+
+// Default no-op for renderers that don't support cursor interaction.
+extension WallpaperRenderer {
+    func updateCursorPosition(_ position: NSPoint) {}
 }

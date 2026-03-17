@@ -61,6 +61,11 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         print("[WebRenderer] Stopped")
     }
 
+    func updateCursorPosition(_ position: NSPoint) {
+        let js = "if (window._weCursorCallback) { window._weCursorCallback(\(position.x), \(position.y)); }"
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -101,9 +106,12 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
             // No-op: audio visualization not yet implemented
         };
 
-        // Cursor position — some wallpapers use parallax or interactive effects
+        // Cursor position — some wallpapers use parallax or interactive effects.
+        // The native side calls window._weCursorCallback(x, y) with normalized coords.
         window.wallpaperRequestCursorPosition = window.wallpaperRequestCursorPosition || function(callback) {
-            // No-op: cursor tracking not yet wired up
+            window._weCursorCallback = function(x, y) {
+                callback({x: x, y: y});
+            };
         };
 
         // Random music file — some wallpapers can play background music

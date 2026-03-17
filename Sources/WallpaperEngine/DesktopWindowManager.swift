@@ -15,6 +15,7 @@ class DesktopWindowManager {
     private var renderer: WallpaperRenderer?
     private var currentProject: WallpaperProject?
     private let occlusionDetector = OcclusionDetector()
+    private let cursorTracker = CursorTracker()
     private var isVisible = true
     private var isManuallyPaused = false
 
@@ -55,6 +56,9 @@ class DesktopWindowManager {
             // Set the renderer's view as content on all desktop windows
             applyRendererToWindows()
 
+            // Start cursor tracking for interactive wallpapers
+            startCursorTracking()
+
             // Only start playing if the desktop is actually visible
             if isVisible {
                 newRenderer.play()
@@ -81,6 +85,7 @@ class DesktopWindowManager {
 
     /// Stop and remove the current wallpaper.
     func clearWallpaper() {
+        cursorTracker.stop()
         renderer?.stop()
         renderer = nil
         currentProject = nil
@@ -105,6 +110,17 @@ class DesktopWindowManager {
             return SceneRenderer(directoryURL: dirURL)
         case .preset, .application:
             throw WallpaperError.unsupportedType(project.type)
+        }
+    }
+
+    private func startCursorTracking() {
+        cursorTracker.start { [weak self] screenPoint in
+            guard let self, let renderer = self.renderer else { return }
+            // Normalize relative to the primary screen
+            if let screen = NSScreen.main {
+                let normalized = CursorTracker.normalize(screenPoint, for: screen)
+                renderer.updateCursorPosition(normalized)
+            }
         }
     }
 
