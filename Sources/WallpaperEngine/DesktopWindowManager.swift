@@ -4,9 +4,12 @@ import AppKit
 ///
 /// Creates one `DesktopWindow` per screen on launch and rebuilds them when
 /// the display configuration changes (monitor connected/disconnected,
-/// resolution change, etc.).
+/// resolution change, etc.). Routes wallpaper content to each window
+/// via a `WallpaperRenderer`.
 class DesktopWindowManager {
     private var windows: [DesktopWindow] = []
+    private var renderer: WallpaperRenderer?
+    private var currentProject: WallpaperProject?
 
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
@@ -22,12 +25,61 @@ class DesktopWindowManager {
 
     /// Load a wallpaper from a file or directory URL.
     func loadWallpaper(from url: URL) {
-        // TODO: Detect wallpaper type from url/project.json and create the
-        //       appropriate renderer (video, web, scene).
-        print("[WallpaperEngine] Loading wallpaper from: \(url.path)")
+        // Stop any existing wallpaper
+        renderer?.stop()
+        renderer = nil
+
+        do {
+            let project = try WallpaperLoader.load(from: url)
+            currentProject = project
+            print("[WallpaperEngine] Loaded project: \"\(project.title)\" (type: \(project.type.rawValue))")
+
+            guard let fileURL = project.fileURL else {
+                print("[WallpaperEngine] Error: Could not resolve wallpaper file URL")
+                return
+            }
+
+            let newRenderer = try createRenderer(for: project, fileURL: fileURL)
+            renderer = newRenderer
+
+            // Set the renderer's view as content on all desktop windows
+            applyRendererToWindows()
+            newRenderer.play()
+
+        } catch {
+            print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Private
+
+    private func createRenderer(for project: WallpaperProject, fileURL: URL) throws -> WallpaperRenderer {
+        switch project.type {
+        case .video:
+            return VideoRenderer(fileURL: fileURL)
+        case .web:
+            // TODO: WebRenderer
+            throw WallpaperError.unsupportedType(.web)
+        case .scene:
+            // TODO: SceneRenderer via linux-wallpaperengine
+            throw WallpaperError.unsupportedType(.scene)
+        case .preset, .application:
+            throw WallpaperError.unsupportedType(project.type)
+        }
+    }
+
+    private func applyRendererToWindows() {
+        guard let renderer else { return }
+
+        for window in windows {
+            // All windows share the same renderer view for now.
+            // For multi-monitor with independent wallpapers, each window
+            // would get its own renderer instance.
+            window.contentView = renderer.view
+            renderer.view.frame = window.contentView?.bounds ?? window.frame
+            renderer.view.autoresizingMask = [.width, .height]
+        }
+    }
 
     private func rebuildWindows() {
         for window in windows {
@@ -41,6 +93,9 @@ class DesktopWindowManager {
             windows.append(window)
         }
 
+        // Re-apply the current renderer to the new windows
+        applyRendererToWindows()
+
         print("[WallpaperEngine] Created \(windows.count) desktop window(s)")
     }
 
@@ -51,5 +106,6 @@ class DesktopWindowManager {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        renderer?.stop()
     }
 }
