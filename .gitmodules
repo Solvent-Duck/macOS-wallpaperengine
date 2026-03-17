@@ -1,0 +1,3 @@
+[submodule "linux-wallpaperengine"]
+	path = linux-wallpaperengine
+	url = https://github.com/Almamu/linux-wallpaperengine
