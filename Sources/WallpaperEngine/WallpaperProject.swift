@@ -30,12 +30,13 @@ struct WallpaperProject: Codable {
     let file: String
     let preview: String?
     let description: String?
+    let tags: [String]?
 
     /// The directory containing this project.
     var directoryURL: URL?
 
     enum CodingKeys: String, CodingKey {
-        case title, type, file, preview, description
+        case title, type, file, preview, description, tags
     }
 
     /// The resolved URL of the main wallpaper file (video, HTML, scene.json, etc.).
@@ -115,7 +116,8 @@ enum WallpaperLoader {
             type: type,
             file: url.lastPathComponent,
             preview: nil,
-            description: nil
+            description: nil,
+            tags: nil
         )
         project.directoryURL = url.deletingLastPathComponent()
         return project

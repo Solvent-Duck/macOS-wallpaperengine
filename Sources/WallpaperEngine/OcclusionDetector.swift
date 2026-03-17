@@ -13,6 +13,7 @@ class OcclusionDetector {
     private var observations: [NSKeyValueObservation] = []
     private var onVisibilityChanged: ((Bool) -> Void)?
     private var trackedWindows: [DesktopWindow] = []
+    private var hasEverBeenVisible = false
 
     /// Start observing occlusion state for the given desktop windows.
     ///
@@ -39,6 +40,7 @@ class OcclusionDetector {
     func stop() {
         observations.removeAll()
         trackedWindows.removeAll()
+        hasEverBeenVisible = false
     }
 
     private func evaluateVisibility() {
@@ -46,6 +48,20 @@ class OcclusionDetector {
         let anyVisible = trackedWindows.contains { window in
             window.occlusionState.contains(.visible)
         }
+
+        // Desktop-level windows (below Finder icons) often report as
+        // permanently occluded because macOS WindowServer treats them as
+        // covered by the desktop icon layer. If all windows report as
+        // occluded but we haven't seen a single visible state yet,
+        // assume visible to avoid blocking playback on launch.
+        if !anyVisible && !hasEverBeenVisible {
+            return  // Don't report false occlusion
+        }
+
+        if anyVisible {
+            hasEverBeenVisible = true
+        }
+
         onVisibilityChanged?(anyVisible)
     }
 

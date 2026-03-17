@@ -8,17 +8,27 @@ import AppKit
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let windowManager = DesktopWindowManager()
+    private let galleryController = GalleryWindowController()
     private var isPaused = false
+    var initialWallpaperPath: String?
 
     // Menu items that need dynamic updates
     private var currentWallpaperItem: NSMenuItem!
     private var pauseResumeItem: NSMenuItem!
+    private var audioToggleItem: NSMenuItem!
     private var clearItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBar()
         windowManager.setupWindows()
         print("[WallpaperEngine] Ready — \(NSScreen.screens.count) display(s) detected")
+
+        // Auto-load wallpaper if a path was provided via CLI
+        if let path = initialWallpaperPath {
+            let url = URL(fileURLWithPath: path)
+            windowManager.loadWallpaper(from: url)
+            updateMenuState()
+        }
     }
 
     private func setupStatusBar() {
@@ -42,6 +52,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Actions
         menu.addItem(NSMenuItem(
+            title: "Browse Wallpapers…",
+            action: #selector(openGallery),
+            keyEquivalent: "b"
+        ))
+        menu.addItem(NSMenuItem(
             title: "Select Wallpaper…",
             action: #selector(selectWallpaper),
             keyEquivalent: "o"
@@ -53,6 +68,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "p"
         )
         menu.addItem(pauseResumeItem)
+
+        audioToggleItem = NSMenuItem(
+            title: "Unmute Audio",
+            action: #selector(toggleAudio),
+            keyEquivalent: "m"
+        )
+        menu.addItem(audioToggleItem)
 
         clearItem = NSMenuItem(
             title: "Clear Wallpaper",
@@ -78,10 +100,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentWallpaperItem.title = windowManager.currentTitle ?? "No wallpaper loaded"
         pauseResumeItem.title = isPaused ? "Resume" : "Pause"
         pauseResumeItem.isEnabled = hasWallpaper
+        audioToggleItem.title = windowManager.isMuted ? "Unmute Audio" : "Mute Audio"
+        audioToggleItem.isEnabled = hasWallpaper && windowManager.supportsAudio
         clearItem.isEnabled = hasWallpaper
     }
 
     // MARK: - Actions
+
+    @objc private func openGallery() {
+        galleryController.showGallery { [weak self] url in
+            self?.windowManager.loadWallpaper(from: url)
+            self?.isPaused = false
+            self?.updateMenuState()
+        }
+    }
 
     @objc private func selectWallpaper() {
         let panel = NSOpenPanel()
@@ -108,6 +140,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             windowManager.resumeWallpaper()
         }
+        updateMenuState()
+    }
+
+    @objc private func toggleAudio() {
+        windowManager.isMuted.toggle()
         updateMenuState()
     }
 

@@ -83,6 +83,15 @@ class DesktopWindowManager {
         }
     }
 
+    /// Whether the current renderer supports audio.
+    var supportsAudio: Bool { renderer?.supportsAudio ?? false }
+
+    /// Whether audio is currently muted.
+    var isMuted: Bool {
+        get { renderer?.isMuted ?? true }
+        set { renderer?.isMuted = newValue }
+    }
+
     /// Stop and remove the current wallpaper.
     func clearWallpaper() {
         cursorTracker.stop()
@@ -154,7 +163,10 @@ class DesktopWindowManager {
         // Re-apply the current renderer to the new windows
         applyRendererToWindows()
 
-        // Start occlusion tracking on the new windows
+        // Start occlusion tracking on the new windows.
+        // Note: Desktop-level windows may not get reliable occlusionState
+        // updates from macOS, so we also default isVisible to true.
+        isVisible = true
         occlusionDetector.observe(windows: windows) { [weak self] visible in
             self?.handleVisibilityChange(visible)
         }

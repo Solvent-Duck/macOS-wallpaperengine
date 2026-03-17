@@ -22,9 +22,19 @@ protocol WallpaperRenderer: AnyObject {
     /// Coordinates are normalized (0.0–1.0) relative to the screen.
     /// Default implementation is a no-op for non-interactive renderers.
     func updateCursorPosition(_ position: NSPoint)
+
+    /// Whether this renderer supports audio output.
+    var supportsAudio: Bool { get }
+
+    /// Whether audio is currently muted.
+    var isMuted: Bool { get set }
 }
 
-// Default no-op for renderers that don't support cursor interaction.
 extension WallpaperRenderer {
     func updateCursorPosition(_ position: NSPoint) {}
+    var supportsAudio: Bool { false }
+    var isMuted: Bool {
+        get { true }
+        set {}
+    }
 }

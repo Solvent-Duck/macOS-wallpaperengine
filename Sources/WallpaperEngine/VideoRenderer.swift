@@ -32,6 +32,13 @@ class VideoRenderer: WallpaperRenderer {
         view = VideoHostView(playerLayer: playerLayer)
     }
 
+    var supportsAudio: Bool { true }
+
+    var isMuted: Bool {
+        get { player.isMuted }
+        set { player.isMuted = newValue }
+    }
+
     func play() {
         player.play()
         print("[VideoRenderer] Playing")
