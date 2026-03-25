@@ -4,8 +4,8 @@ import AVFoundation
 /// Renders video wallpapers using AVFoundation.
 ///
 /// Supports MP4, MOV, M4V, and any format AVFoundation can decode natively.
-/// WebM is NOT natively supported by AVFoundation and will require a separate
-/// decoding path (ffmpeg/libvpx) in a future update.
+/// WebM files are transcoded to MP4 via `WebMTranscoder` before being passed
+/// to this renderer, so all playback uses native hardware-accelerated decoding.
 ///
 /// Features:
 /// - Seamless looping via AVPlayerLooper

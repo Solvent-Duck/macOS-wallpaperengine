@@ -18,6 +18,8 @@ class DesktopWindowManager {
     private let cursorTracker = CursorTracker()
     private var isVisible = true
     private var isManuallyPaused = false
+    private var isSleeping = false
+    private var lastRebuildTime: Double = 0
 
     /// The title of the currently loaded wallpaper, if any.
     var currentTitle: String? { currentProject?.title }
@@ -32,6 +34,23 @@ class DesktopWindowManager {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+
+        // Sleep/wake notifications
+        let wsnc = NSWorkspace.shared.notificationCenter
+        wsnc.addObserver(self, selector: #selector(handleSleep),
+                         name: NSWorkspace.willSleepNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(handleSleep),
+                         name: NSWorkspace.screensDidSleepNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(handleWake),
+                         name: NSWorkspace.didWakeNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(handleWake),
+                         name: NSWorkspace.screensDidWakeNotification, object: nil)
+
+        // Screen lock / fast user switch
+        wsnc.addObserver(self, selector: #selector(handleSleep),
+                         name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(handleWake),
+                         name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
     }
 
     /// Load a wallpaper from a file or directory URL.
@@ -73,14 +92,18 @@ class DesktopWindowManager {
     func pauseWallpaper() {
         isManuallyPaused = true
         renderer?.pause()
+        cursorTracker.stop()
+        PerformanceMonitor.shared.logEvent("Manual pause")
     }
 
-    /// Resume a manually paused wallpaper (still respects occlusion).
+    /// Resume a manually paused wallpaper (still respects occlusion and sleep).
     func resumeWallpaper() {
         isManuallyPaused = false
-        if isVisible {
+        if canResume {
             renderer?.play()
+            startCursorTracking()
         }
+        PerformanceMonitor.shared.logEvent("Manual resume")
     }
 
     /// Whether the current renderer supports audio.
@@ -90,6 +113,27 @@ class DesktopWindowManager {
     var isMuted: Bool {
         get { renderer?.isMuted ?? true }
         set { renderer?.isMuted = newValue }
+    }
+
+    /// Explicitly stop all rendering and close desktop windows before app termination.
+    ///
+    /// Must be called from `applicationWillTerminate` so the CVDisplayLink and C++
+    /// engine context are destroyed on the main thread, before `exit(0)` runs.
+    /// Without this, SDL2's atexit handler fires while the main thread is already in
+    /// `exit()`, causing a deadlock that prevents the process from exiting cleanly.
+    func teardown() {
+        cursorTracker.stop()
+        occlusionDetector.stop()
+        renderer?.stop()
+        renderer = nil
+        currentProject = nil
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        for window in windows {
+            window.close()
+        }
+        windows.removeAll()
+        print("[WallpaperEngine] Teardown complete")
     }
 
     /// Stop and remove the current wallpaper.
@@ -109,7 +153,13 @@ class DesktopWindowManager {
     private func createRenderer(for project: WallpaperProject, fileURL: URL) throws -> WallpaperRenderer {
         switch project.type {
         case .video:
-            return VideoRenderer(fileURL: fileURL)
+            let resolvedURL: URL
+            if WebMTranscoder.isWebM(fileURL) {
+                resolvedURL = try WebMTranscoder.transcode(webmURL: fileURL)
+            } else {
+                resolvedURL = fileURL
+            }
+            return VideoRenderer(fileURL: resolvedURL)
         case .web:
             return WebRenderer(fileURL: fileURL)
         case .scene:
@@ -147,6 +197,7 @@ class DesktopWindowManager {
     }
 
     private func rebuildWindows() {
+        lastRebuildTime = CACurrentMediaTime()
         occlusionDetector.stop()
 
         for window in windows {
@@ -174,26 +225,65 @@ class DesktopWindowManager {
         print("[WallpaperEngine] Created \(windows.count) desktop window(s)")
     }
 
+    /// Whether all conditions are met to resume rendering.
+    private var canResume: Bool {
+        isVisible && !isManuallyPaused && !isSleeping
+    }
+
     private func handleVisibilityChange(_ visible: Bool) {
         guard visible != isVisible else { return }
         isVisible = visible
 
-        if visible && !isManuallyPaused {
+        if visible && !isManuallyPaused && !isSleeping {
             renderer?.play()
+            startCursorTracking()
             print("[WallpaperEngine] Desktop visible — resuming renderer")
         } else if !visible {
             renderer?.pause()
+            cursorTracker.stop()
             print("[WallpaperEngine] Desktop fully occluded — pausing renderer")
         }
+        PerformanceMonitor.shared.logEvent("Occlusion: \(visible ? "visible" : "occluded")")
+    }
+
+    @objc private func handleSleep(_ notification: Notification) {
+        guard !isSleeping else { return }
+        isSleeping = true
+        renderer?.pause()
+        cursorTracker.stop()
+        print("[WallpaperEngine] Sleep/lock — pausing renderer (\(notification.name.rawValue))")
+        PerformanceMonitor.shared.logEvent("Sleep: \(notification.name.rawValue)")
+    }
+
+    @objc private func handleWake(_ notification: Notification) {
+        guard isSleeping else { return }
+        isSleeping = false
+        if canResume {
+            // Check if the scene renderer flagged that it needs recovery
+            if let sceneRenderer = renderer as? SceneRenderer, sceneRenderer.needsRecovery {
+                sceneRenderer.recoverFromSleep()
+            } else {
+                renderer?.play()
+            }
+            startCursorTracking()
+        }
+        print("[WallpaperEngine] Wake/unlock — \(canResume ? "resuming" : "staying paused") (\(notification.name.rawValue))")
+        PerformanceMonitor.shared.logEvent("Wake: \(notification.name.rawValue)")
     }
 
     @objc private func screensDidChange(_ notification: Notification) {
+        // Debounce: creating/closing windows can itself trigger this notification.
+        // Ignore rapid-fire events within 1 second of the last rebuild.
+        let now = CACurrentMediaTime()
+        guard now - lastRebuildTime > 1.0 else { return }
         print("[WallpaperEngine] Display configuration changed — rebuilding windows")
+        PerformanceMonitor.shared.logEvent("Display reconfig")
         rebuildWindows()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         occlusionDetector.stop()
         renderer?.stop()
     }

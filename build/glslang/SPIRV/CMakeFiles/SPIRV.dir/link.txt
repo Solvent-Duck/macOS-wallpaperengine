@@ -1,0 +1,2 @@
+/Library/Developer/CommandLineTools/usr/bin/ar qc libSPIRV.a "CMakeFiles/SPIRV.dir/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/linux-wallpaperengine/src/External/glslang-WallpaperEngine/glslang/stub.cpp.o"
+/Library/Developer/CommandLineTools/usr/bin/ranlib libSPIRV.a

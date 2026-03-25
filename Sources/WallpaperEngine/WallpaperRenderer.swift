@@ -28,6 +28,10 @@ protocol WallpaperRenderer: AnyObject {
 
     /// Whether audio is currently muted.
     var isMuted: Bool { get set }
+
+    /// Attempt recovery after display sleep/wake if rendering is broken.
+    /// Default implementation is a no-op. Only SceneRenderer overrides this.
+    func recoverFromSleep()
 }
 
 extension WallpaperRenderer {
@@ -37,4 +41,5 @@ extension WallpaperRenderer {
         get { true }
         set {}
     }
+    func recoverFromSleep() {}
 }

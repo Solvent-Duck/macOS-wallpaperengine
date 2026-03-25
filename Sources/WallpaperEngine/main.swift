@@ -1,5 +1,9 @@
 import AppKit
 
+// Disable stdout buffering so logs appear immediately when not attached to a tty
+setbuf(stdout, nil)
+setbuf(stderr, nil)
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

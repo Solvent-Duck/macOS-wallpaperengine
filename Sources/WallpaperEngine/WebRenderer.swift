@@ -14,6 +14,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     let view: NSView
     private let webView: WKWebView
     private let fileURL: URL
+    private var isLoaded = false
 
     init(fileURL: URL) {
         self.fileURL = fileURL
@@ -46,17 +47,24 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     }
 
     func play() {
-        let directory = fileURL.deletingLastPathComponent()
-        webView.loadFileURL(fileURL, allowingReadAccessTo: directory)
-        print("[WebRenderer] Loading \(fileURL.lastPathComponent)")
+        if isLoaded {
+            // Resume without reloading — unpause JS execution
+            webView.evaluateJavaScript(Self.resumeScript, completionHandler: nil)
+            print("[WebRenderer] Resumed")
+        } else {
+            let directory = fileURL.deletingLastPathComponent()
+            webView.loadFileURL(fileURL, allowingReadAccessTo: directory)
+            print("[WebRenderer] Loading \(fileURL.lastPathComponent)")
+        }
     }
 
     func pause() {
-        webView.evaluateJavaScript("document.hidden = true;", completionHandler: nil)
+        webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil)
         print("[WebRenderer] Paused")
     }
 
     func stop() {
+        isLoaded = false
         webView.loadHTMLString("", baseURL: nil)
         print("[WebRenderer] Stopped")
     }
@@ -69,6 +77,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        isLoaded = true
         print("[WebRenderer] Page loaded successfully")
     }
 
@@ -92,34 +101,129 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     (function() {
         'use strict';
 
-        // Property listener — wallpapers register callbacks here to receive
-        // user-configurable property changes
+        // --- Pause-aware timer wrappers ---
+        window._wePaused = false;
+        window._wePendingRAFs = [];
+        window._wePendingTimeouts = [];
+        window._wePendingIntervals = [];
+
+        var _weOrigRAF = window.requestAnimationFrame.bind(window);
+        var _weOrigSetTimeout = window.setTimeout.bind(window);
+        var _weOrigSetInterval = window.setInterval.bind(window);
+        var _weOrigClearTimeout = window.clearTimeout.bind(window);
+        var _weOrigClearInterval = window.clearInterval.bind(window);
+
+        window.requestAnimationFrame = function(callback) {
+            if (window._wePaused) {
+                window._wePendingRAFs.push(callback);
+                return -1;
+            }
+            return _weOrigRAF(callback);
+        };
+
+        window.setTimeout = function(callback, delay) {
+            if (window._wePaused && typeof callback === 'function') {
+                var id = { cleared: false };
+                window._wePendingTimeouts.push({ fn: callback, delay: delay || 0, id: id });
+                return id;
+            }
+            return _weOrigSetTimeout(callback, delay);
+        };
+
+        window.setInterval = function(callback, delay) {
+            if (window._wePaused && typeof callback === 'function') {
+                var id = { cleared: false };
+                window._wePendingIntervals.push({ fn: callback, delay: delay || 0, id: id });
+                return id;
+            }
+            return _weOrigSetInterval(callback, delay);
+        };
+
+        window.clearTimeout = function(id) {
+            if (id && typeof id === 'object' && 'cleared' in id) {
+                id.cleared = true;
+                return;
+            }
+            return _weOrigClearTimeout(id);
+        };
+
+        window.clearInterval = function(id) {
+            if (id && typeof id === 'object' && 'cleared' in id) {
+                id.cleared = true;
+                return;
+            }
+            return _weOrigClearInterval(id);
+        };
+
+        // Expose originals for pause/resume scripts
+        window._weOrigRAF = _weOrigRAF;
+        window._weOrigSetTimeout = _weOrigSetTimeout;
+        window._weOrigSetInterval = _weOrigSetInterval;
+
+        // --- WE API stubs ---
+
         window.wallpaperPropertyListener = window.wallpaperPropertyListener || {
             applyUserProperties: function(properties) {},
             applyGeneralProperties: function(properties) {},
             setPaused: function(isPaused) {}
         };
 
-        // Audio listener — wallpapers register a callback to receive
-        // audio frequency/waveform data for visualization
-        window.wallpaperRegisterAudioListener = window.wallpaperRegisterAudioListener || function(callback) {
-            // No-op: audio visualization not yet implemented
-        };
+        window.wallpaperRegisterAudioListener = window.wallpaperRegisterAudioListener || function(callback) {};
 
-        // Cursor position — some wallpapers use parallax or interactive effects.
-        // The native side calls window._weCursorCallback(x, y) with normalized coords.
         window.wallpaperRequestCursorPosition = window.wallpaperRequestCursorPosition || function(callback) {
             window._weCursorCallback = function(x, y) {
                 callback({x: x, y: y});
             };
         };
 
-        // Random music file — some wallpapers can play background music
         window.wallpaperRequestRandomMusicFile = window.wallpaperRequestRandomMusicFile || function() {
             return '';
         };
 
         console.log('[WallpaperEngine] JS API polyfill loaded');
+    })();
+    """
+
+    /// JS to pause all animation/timer activity.
+    private static let pauseScript = """
+    (function() {
+        window._wePaused = true;
+        if (window.wallpaperPropertyListener && window.wallpaperPropertyListener.setPaused) {
+            window.wallpaperPropertyListener.setPaused(true);
+        }
+    })();
+    """
+
+    /// JS to resume animation/timer activity without a full page reload.
+    private static let resumeScript = """
+    (function() {
+        window._wePaused = false;
+
+        // Flush pending requestAnimationFrame callbacks
+        var rafs = window._wePendingRAFs.splice(0);
+        for (var i = 0; i < rafs.length; i++) {
+            window._weOrigRAF(rafs[i]);
+        }
+
+        // Restore pending timeouts
+        var timeouts = window._wePendingTimeouts.splice(0);
+        for (var i = 0; i < timeouts.length; i++) {
+            if (!timeouts[i].id.cleared) {
+                window._weOrigSetTimeout(timeouts[i].fn, timeouts[i].delay);
+            }
+        }
+
+        // Restore pending intervals
+        var intervals = window._wePendingIntervals.splice(0);
+        for (var i = 0; i < intervals.length; i++) {
+            if (!intervals[i].id.cleared) {
+                window._weOrigSetInterval(intervals[i].fn, intervals[i].delay);
+            }
+        }
+
+        if (window.wallpaperPropertyListener && window.wallpaperPropertyListener.setPaused) {
+            window.wallpaperPropertyListener.setPaused(false);
+        }
     })();
     """
 }

@@ -1,0 +1,2 @@
+/Library/Developer/CommandLineTools/usr/bin/ar qc libspirv-cross-util.a "CMakeFiles/spirv-cross-util.dir/spirv_cross_util.cpp.o"
+/Library/Developer/CommandLineTools/usr/bin/ranlib libspirv-cross-util.a

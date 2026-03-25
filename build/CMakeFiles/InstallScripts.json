@@ -1,0 +1,17 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/glslang/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/glslang/External/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/glslang/SPIRV/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/glslang/glslang/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/glslang/glslang/OSDependent/Unix/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/glslang/StandAlone/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/spirv-cross/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/kissfft/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/argparse/cmake_install.cmake",
+		"/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/build/quickjs/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

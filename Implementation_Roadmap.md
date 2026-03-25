@@ -10,9 +10,9 @@ The application is a menu bar-only macOS app that renders animated wallpapers be
 
 | Type | Status | Details |
 |------|--------|---------|
-| **Video** | **Working** (partial) | MP4, MOV, M4V via AVFoundation + AVPlayerLooper. WebM **not yet supported** (requires ffmpeg/libvpx). |
+| **Video** | **Working** (partial) | MP4, MOV, M4V via AVFoundation + AVPlayerLooper. WebM is supported via first-load ffmpeg transcoding to cached MP4. |
 | **Web** | **Working** | WKWebView loads local HTML/JS/CSS bundles. JS API polyfill covers ~20% of WE's API (stubs for properties, audio, cursor, music). |
-| **Scene** | **Stub only** | Placeholder UI. No rendering. Requires porting linux-wallpaperengine C++ to macOS. |
+| **Scene** | **Implemented** (untested) | C bridge to linux-wallpaperengine via `libwallpaperengine.a`. Shared OpenGL context + CVDisplayLink at 30fps. Builds successfully; awaiting runtime testing. |
 | **Application** | **Skipped** | Windows executables — not feasible on macOS. |
 
 ---
@@ -28,6 +28,7 @@ The application is a menu bar-only macOS app that renders animated wallpapers be
 - **Wallpaper project loader** — Loads from directories with `project.json`, direct `project.json` files, `.pkg` archives, or bare media files (auto-wrapped).
 - **Cursor tracking** — Global mouse event monitoring with normalized coordinates (0.0–1.0), forwarded to web wallpapers.
 - **Multi-monitor support** — `DesktopWindowManager` creates/destroys windows on display configuration changes.
+- **Scene renderer** — Full C bridge to linux-wallpaperengine C++ engine. Two-step build: `build-bridge.sh` (CMake → `libwallpaperengine.a` 4.9MB static library) then `swift build` (SPM links everything). Renders via shared OpenGL context between GLFW (engine) and NSOpenGLView (display), CVDisplayLink capped at 30fps, zero GPU cost when paused. macOS platform patches applied to engine: `#ifdef __APPLE__` guards for PulseAudio, CEF, MPV, X11; forward-compat GL hints; embeddable constructors; inline stubs for excluded subsystems.
 
 ---
 
@@ -35,28 +36,29 @@ The application is a menu bar-only macOS app that renders animated wallpapers be
 
 ### High Priority (v1 targets not yet done)
 
-#### 1. Scene Wallpaper Rendering (Difficulty: 8/10)
-The largest and most critical remaining work item. Scene wallpapers are the most common type on the Wallpaper Engine workshop.
+#### 1. Scene Renderer Runtime Testing (Difficulty: 5/10)
+The scene renderer is implemented and builds but has not been runtime-tested yet. Test wallpapers are available at `~/wallpaper_engine/test_wallpapers/` (deep_space, neon_sunset, shimmering_particles). WE assets at `~/wallpaper_engine/assets/`.
 
 **What's needed:**
-- Port `linux-wallpaperengine` C++ submodule to build on macOS
-- Implement the C bridge (`WEBridge.h`) exposing: `we_create_context`, `we_render_frame`, `we_get_resolution`, `we_set_property`, `we_set_mouse_position`, `we_set_audio_data`, `we_destroy_context`
-- Integrate rendered frames into `DesktopWindow` via `NSOpenGLView` or `CAOpenGLLayer`
-- Handle platform-specific replacements:
-  - PulseAudio -> CoreAudio (audio capture)
-  - X11 windowing -> Not needed (GLFW handles Cocoa)
-- Install and link dependencies: GLEW, freeglut, MPV, SDL2, FFMPEG, LZ4
-- Cross-platform libs that should work as-is: SPIRV-Cross, glslang, kissfft, QuickJS, GLFW
+- Run the app with a scene wallpaper and verify it renders correctly
+- Debug any shader compilation failures (macOS GL has stricter validation)
+- Verify pause/resume lifecycle works end-to-end
+- Profile CPU/GPU usage
+- Expected: ~90% shader compatibility; some complex 3D wallpapers may fail
 
-**Biggest risk:** Shader translation — WE uses DirectX HLSL with custom preprocessor macros. `linux-wallpaperengine` translates to GLSL but doesn't cover everything. Some complex 3D wallpapers may render incorrectly.
+**Known v1 limitations:**
+- Audio reactivity stubbed (wallpapers see silence)
+- Video textures within scenes not supported (MPV excluded on macOS)
+- Engine runs in-process (no crash isolation)
+- Mouse position injection is a TODO in the bridge
 
 #### 2. WebM Video Support (Difficulty: 4/10)
-WebM is extremely common in WE's library but is not supported by AVFoundation.
+Implemented as a pragmatic compatibility layer: `.webm` files are transcoded to cached MP4 on first load, then played through AVFoundation.
 
-**What's needed:**
-- Integrate ffmpeg or libvpx for VP8/VP9 decoding
-- Create an alternative video rendering path for WebM files
-- Route `.webm` files through this decoder instead of AVFoundation
+**Remaining work:**
+- Move transcoding off the UI path so large wallpapers do not block loading
+- Improve user-facing progress/error reporting during transcode
+- Consider a true decode path later if startup latency becomes a real problem
 
 #### 3. Per-Wallpaper Properties UI (Difficulty: 3/10)
 Wallpaper Engine wallpapers define user-configurable properties in `project.json` (colors, sliders, toggles, etc.).
@@ -89,11 +91,11 @@ Required for audio-visualizing wallpapers (both web and scene types).
 **Challenge:** Capturing system audio on macOS is harder than on Windows. May require a virtual audio device or ScreenCaptureKit.
 
 #### 6. Frame Rate Capping (Difficulty: 2/10)
-Plan calls for 30fps cap to halve GPU load vs 60fps.
+Scene renderer already uses CVDisplayLink with 30fps cap. Video/web are frame-managed by their frameworks.
 
 **What's needed:**
-- Use `CADisplayLink` / `CVDisplayLink` for render timing
-- Apply cap to scene renderer (video/web are already frame-managed by their respective frameworks)
+- Make frame rate configurable (e.g., UserDefaults or properties UI)
+- Consider per-wallpaper frame rate settings
 
 #### 7. App Nap Participation (Difficulty: 2/10)
 **What's needed:**
@@ -140,11 +142,11 @@ Run the scene renderer as a separate process for crash isolation.
 ## Implementation Order (Suggested)
 
 ```
-1. WebM video support          — Quick win, unblocks many video wallpapers
-2. Scene renderer port         — Largest item, unblocks the most common wallpaper type
+1. Scene renderer testing      — Validate the build, debug shader issues (DONE: builds, needs runtime test)
+2. WebM video support          — Quick win, unblocks many video wallpapers
 3. Properties UI               — Enables customization for all wallpaper types
 4. Enhanced JS API             — Improves web wallpaper compatibility
 5. Audio reactivity            — Enables audio-visualizing wallpapers
-6. Frame rate cap + App Nap    — Polish and power efficiency
+6. App Nap + power polish      — Power efficiency refinements
 7. Metal backend               — Long-term performance investment
 ```

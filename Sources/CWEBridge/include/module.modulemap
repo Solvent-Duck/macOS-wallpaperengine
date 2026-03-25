@@ -1,0 +1,5 @@
+module CWEBridge {
+    header "WEBridge.h"
+    link "wallpaperengine"
+    export *
+}

@@ -31,6 +31,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // Explicitly stop the CVDisplayLink and destroy the C++ engine context
+        // before exit(0) is called. Without this, SDL2's atexit handler fires
+        // while the main thread is in exit(), deadlocking the process.
+        windowManager.teardown()
+    }
+
     private func setupStatusBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
@@ -82,6 +89,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         )
         menu.addItem(clearItem)
+
+        menu.addItem(NSMenuItem(
+            title: "Copy Diagnostics",
+            action: #selector(copyDiagnostics),
+            keyEquivalent: "d"
+        ))
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(
@@ -148,10 +161,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuState()
     }
 
+    @objc private func copyDiagnostics() {
+        let summary = PerformanceMonitor.shared.summary()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+        print("[WallpaperEngine] Diagnostics copied to clipboard")
+    }
+
     @objc private func clearWallpaper() {
         windowManager.clearWallpaper()
         isPaused = false
         updateMenuState()
+    }
+
+    @objc private func quitApp() {
+        // Use an explicit target/action for the status-item menu instead of
+        // relying on responder-chain delivery to NSApplication. Accessory apps
+        // with menu-bar-only UI can be finicky here, and we also want our
+        // teardown path to run through the normal termination lifecycle.
+        NSApplication.shared.terminate(nil)
     }
 }
 

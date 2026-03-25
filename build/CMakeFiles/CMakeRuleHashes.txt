@@ -1,0 +1,2 @@
+# Hashes of file build rules.
+a315aaea0e846b6feacd80df681ec097 include/glslang/glsl_intrinsic_header.h

@@ -1,0 +1,1 @@
+/Library/Developer/CommandLineTools/usr/bin/c++  -Wno-narrowing -O3 -DNDEBUG -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -Wl,-search_paths_first -Wl,-headerpad_max_install_names "CMakeFiles/glslang-standalone.dir/StandAlone.cpp.o" -o glslang  ../glslang/libglslang.a ../glslang/libglslang-default-resource-limits.a -lpthread

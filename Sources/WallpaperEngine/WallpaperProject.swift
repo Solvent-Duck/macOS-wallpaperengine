@@ -11,9 +11,9 @@ enum WallpaperType: String, Codable {
     /// Whether this type is currently supported by the macOS renderer.
     var isSupported: Bool {
         switch self {
-        case .video, .web:
+        case .video, .web, .scene:
             return true
-        case .scene, .preset, .application:
+        case .preset, .application:
             return false
         }
     }
