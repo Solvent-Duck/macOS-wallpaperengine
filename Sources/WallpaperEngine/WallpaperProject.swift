@@ -30,10 +30,14 @@ struct WallpaperProject: Codable {
     let file: String
     let preview: String?
     let description: String?
-    let tags: [String]?
+    var tags: [String]?
 
     /// The directory containing this project.
     var directoryURL: URL?
+
+    /// User-configurable properties parsed from the `"properties"` block.
+    /// Empty for bare media files and wallpapers with no properties.
+    var properties: [WallpaperProperty] = []
 
     enum CodingKeys: String, CodingKey {
         case title, type, file, preview, description, tags
@@ -96,6 +100,7 @@ enum WallpaperLoader {
         let decoder = JSONDecoder()
         var project = try decoder.decode(WallpaperProject.self, from: data)
         project.directoryURL = directory
+        project.properties = WallpaperProperty.parse(from: data)
         return project
     }
 

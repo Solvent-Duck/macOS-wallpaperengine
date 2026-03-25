@@ -127,6 +127,26 @@ class SceneRenderer: WallpaperRenderer {
         }
     }
 
+    func applyProperties(_ properties: [WallpaperProperty], values: [String: String]) {
+        guard let ctx = context else { return }
+        for prop in properties {
+            let value = values[prop.key] ?? prop.defaultValue
+            we_set_property(ctx, prop.key, value)
+        }
+    }
+
+    func applyProperty(_ property: WallpaperProperty, value: String) {
+        guard let ctx = context else { return }
+        we_set_property(ctx, property.key, value)
+    }
+
+    func receiveAudioData(_ data: [Float]) {
+        guard let ctx = context, isPlaying else { return }
+        data.withUnsafeBufferPointer { ptr in
+            we_set_audio_data(ctx, ptr.baseAddress, Int32(ptr.count))
+        }
+    }
+
     func recoverFromSleep() {
         print("[SceneRenderer] Recovering from sleep — destroying and recreating context")
         PerformanceMonitor.shared.logEvent("SceneRenderer: sleep recovery — recreating context")
@@ -247,19 +267,29 @@ class SceneRenderer: WallpaperRenderer {
         guard let ctx = context, let glView = glView else { return }
 
         let renderStart = CACurrentMediaTime()
-        let gotTexture = glView.renderFrame(engineContext: ctx, deltaTime: delta)
-        let renderMs = (CACurrentMediaTime() - renderStart) * 1000.0
-        PerformanceMonitor.shared.recordFrame(renderTimeMs: renderMs)
+        let timing = glView.renderFrame(engineContext: ctx, deltaTime: delta)
+        let totalMs = (CACurrentMediaTime() - renderStart) * 1000.0
+        let intervalMs = elapsed * 1000.0
+        PerformanceMonitor.shared.recordFrame(
+            totalMs: totalMs,
+            engineMs: timing.engineMs,
+            blitMs: timing.blitMs,
+            intervalMs: intervalMs
+        )
 
         // Track consecutive frames with no texture output (possible broken GL state after wake)
-        if gotTexture {
+        if timing.gotTexture {
             consecutiveZeroTextureFrames = 0
         } else {
             consecutiveZeroTextureFrames += 1
             if consecutiveZeroTextureFrames == zeroTextureThreshold {
-                print("[SceneRenderer] Warning: \(zeroTextureThreshold) consecutive frames with no texture — may need recovery")
+                print("[SceneRenderer] Warning: \(zeroTextureThreshold) consecutive frames with no texture — triggering recovery")
                 PerformanceMonitor.shared.logEvent("SceneRenderer: zero-texture threshold hit")
                 needsRecovery = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.needsRecovery, self.isPlaying else { return }
+                    self.recoverFromSleep()
+                }
             }
         }
     }
@@ -298,20 +328,28 @@ private class SceneOpenGLView: NSOpenGLView {
         fatalError("init(coder:) not implemented")
     }
 
-    /// Render a frame. Returns `true` if a valid texture was obtained and drawn.
-    @discardableResult
-    func renderFrame(engineContext ctx: WEContextRef, deltaTime: Double) -> Bool {
+    struct FrameTiming {
+        let gotTexture: Bool
+        let engineMs: Double   // time for we_render_frame (CPU stall ≈ GPU work)
+        let blitMs: Double     // time for blit quad draw + buffer flush
+    }
+
+    /// Render a frame. Returns timing breakdown and whether a texture was drawn.
+    func renderFrame(engineContext ctx: WEContextRef, deltaTime: Double) -> FrameTiming {
         guard let glContext = openGLContext else {
             if frameCount == 0 { print("[SceneRenderer] No openGLContext on view") }
-            return false
+            return FrameTiming(gotTexture: false, engineMs: 0, blitMs: 0)
         }
         let cglContext = glContext.cglContextObj!
 
         CGLLockContext(cglContext)
 
-        // Step 1: Engine renders with its own GLFW context (FBOs are per-context).
-        // we_render_frame internally calls glfwMakeContextCurrent + glFinish.
+        // Step 1: Engine renders into its own GLFW context.
+        // we_render_frame calls glfwMakeContextCurrent + glFinish internally,
+        // so this wall-clock time is the true GPU render time for the scene.
+        let engineStart = CACurrentMediaTime()
         we_render_frame(ctx, deltaTime)
+        let engineMs = (CACurrentMediaTime() - engineStart) * 1000.0
 
         // Step 2: Switch to the view's shared context to blit the texture.
         glContext.makeCurrentContext()
@@ -328,6 +366,7 @@ private class SceneOpenGLView: NSOpenGLView {
 
         frameCount += 1
 
+        let blitStart = CACurrentMediaTime()
         if gotTexture {
             let bounds = self.convertToBacking(self.bounds)
             glViewport(0, 0, GLsizei(bounds.width), GLsizei(bounds.height))
@@ -344,8 +383,10 @@ private class SceneOpenGLView: NSOpenGLView {
         }
 
         glContext.flushBuffer()
+        let blitMs = (CACurrentMediaTime() - blitStart) * 1000.0
+
         CGLUnlockContext(cglContext)
-        return gotTexture
+        return FrameTiming(gotTexture: gotTexture, engineMs: engineMs, blitMs: blitMs)
     }
 
     private func setupBlitShader() {

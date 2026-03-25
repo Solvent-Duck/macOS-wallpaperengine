@@ -115,79 +115,23 @@ You are now inside the project folder.
 
 ---
 
-## Part 4 — Build the app
+## Part 4 — Build and start the app
 
 This is the part that looks scary but is mostly just waiting.
 
-### Step 1: Build the wallpaper engine bridge
-
 Paste:
 
 ```bash
-./build-bridge.sh
+./run.sh
 ```
 
-What this does:
-- Downloads required sub-parts
-- Compiles the rendering engine
-- Prepares the C++ side of the app
+What this does (automatically, in order):
+1. Builds the C++ rendering engine — usually **2–5 minutes** the very first time
+2. Builds the Mac app itself
+3. Launches the app
 
-Expected time:
-- Usually **2–5 minutes**, sometimes longer the first time
-
-When it finishes successfully, you should see something like:
-
-```text
-=== Build complete ===
-Static library: build/lib/libwallpaperengine.a
-Bridge header:  build/include/WEBridge.h
-```
-
----
-
-### Step 2: Build the Mac app itself
-
-Paste:
-
-```bash
-swift build
-```
-
-When it finishes, the app binary will exist here:
-
-```text
-.build/debug/WallpaperEngine
-```
-
-If you want the optimized version later, use:
-
-```bash
-swift build -c release
-```
-
-That version ends up here:
-
-```text
-.build/release/WallpaperEngine
-```
-
-For most people, the normal debug build is fine to start with.
-
----
-
-## Part 5 — Start the app
-
-To launch it, paste:
-
-```bash
-.build/debug/WallpaperEngine
-```
-
-If you built the release version instead, paste:
-
-```bash
-.build/release/WallpaperEngine
-```
+You only need this one command.
+On every run after the first, steps 1 and 2 are much faster because the engine is already built.
 
 When it opens:
 - You may **not** see a normal app window
@@ -346,10 +290,10 @@ The app can also load a wallpaper directly from Terminal when launching.
 Example:
 
 ```bash
-.build/debug/WallpaperEngine "$HOME/Wallpaper Projects/1234567890"
+./run.sh "$HOME/Wallpaper Projects/1234567890"
 ```
 
-That starts the app and immediately loads that wallpaper.
+That builds (if needed) and starts the app with that wallpaper already loaded.
 
 ---
 
@@ -419,14 +363,15 @@ brew --version
 ---
 
 ### Problem: build says `library not found for -lwallpaperengine`
-You probably skipped the bridge build.
+The C++ bridge has not been compiled yet.
 
 Run:
 
 ```bash
-./build-bridge.sh
-swift build
+./run.sh
 ```
+
+That will build the bridge automatically before building the Swift app.
 
 ---
 
@@ -515,17 +460,14 @@ If you want the shortest version, do this:
    ```bash
    brew install cmake glew glfw sdl2 lz4 ffmpeg freeglut glm
    ```
-5. Run:
+5. Build and launch:
    ```bash
    cd /Users/isaiahbergstrom/Projects/macOS-wallpaperengine
-   ./build-bridge.sh
-   swift build
+   ./run.sh
    ```
-6. Launch:
-   ```bash
-   .build/debug/WallpaperEngine
-   ```
-7. Create wallpaper folder if needed:
+   This handles the bridge build, Swift build, and launch in one step.
+   The first run takes 2–5 minutes for the C++ engine. After that it's fast.
+6. Create wallpaper folder if needed:
    ```bash
    mkdir -p "$HOME/Wallpaper Projects"
    ```
@@ -547,7 +489,7 @@ The first setup is the annoying part.
 After that, normal use is simple:
 
 - put wallpapers into `~/Wallpaper Projects/`
-- launch the app
+- run `./run.sh` from the project folder
 - click the menu bar icon
 - choose a wallpaper
 

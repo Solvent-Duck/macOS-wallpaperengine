@@ -50,6 +50,7 @@ The scene renderer is implemented and builds but has not been runtime-tested yet
 - Audio reactivity stubbed (wallpapers see silence)
 - Video textures within scenes not supported (MPV excluded on macOS)
 - Engine runs in-process (no crash isolation)
+- Normal app termination currently hits a linked C++ finalizer crash (`glslang` / `ShFinalize`), so quit uses an explicit teardown + immediate process exit workaround
 - Mouse position injection is a TODO in the bridge
 
 #### 2. WebM Video Support (Difficulty: 4/10)
@@ -104,6 +105,11 @@ Scene renderer already uses CVDisplayLink with 30fps cap. Video/web are frame-ma
 - Prevent App Nap when actively rendering
 
 ### Long-Term (Post-v1)
+
+#### Automation Direction (Post-core / QoL layer)
+Once core rendering compatibility and stability are finished, the cleanest AI-facing automation path is a small machine-readable control layer for the running app rather than UI scripting. The preferred shape is a companion CLI backed by a local IPC channel (Unix domain socket first, XPC later if desired) with commands such as `list`, `set`, `status`, `pause`, `resume`, `clear`, and `diagnostics`, all with JSON output.
+
+This is intentionally a **post-core** feature, not part of the current v1 rendering push. The long-term end goal is tag-driven wallpaper selection, where an external agent can choose wallpapers based on metadata like local weather, time of day, season, and date, then apply them through a stable command surface instead of menu automation.
 
 #### 8. Metal Rendering Backend (Difficulty: 7/10)
 OpenGL is deprecated on macOS since 10.14. It still works (runs through a Metal translation layer on Apple Silicon) but adds CPU overhead.

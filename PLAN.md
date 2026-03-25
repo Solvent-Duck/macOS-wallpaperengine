@@ -120,26 +120,28 @@ On Apple Silicon, OpenGL runs through a Metal translation layer adding CPU overh
 - [x] Desktop window layer (borderless windows at desktop level, one per screen)
 - [x] Multi-monitor support (auto-rebuilds on display config changes)
 - [x] Video wallpapers — MP4/MOV/M4V via AVFoundation + AVPlayerLooper
+- [x] WebM video support — ffmpeg transcoder with VideoToolbox HW acceleration + disk cache
 - [x] Web wallpapers — WKWebView with WE JS API polyfill (~20% API coverage)
-- [x] Occlusion-based pause/resume for power efficiency
+- [x] Scene wallpapers — linux-wallpaperengine C++ port via C bridge + CVDisplayLink at 30fps (runtime-tested: deep_space, neon_sunset, shimmering_particles)
+- [x] Occlusion-based pause/resume (triple-gate: visibility + manual + sleep)
+- [x] Sleep/wake handling with automatic scene renderer GL context recovery
+- [x] Frame rate cap at 30fps via CVDisplayLink
 - [x] Menu bar UI (status item with pause/resume, clear, audio toggle, gallery)
+- [x] Fix: menu item actions broken after gallery opens (explicit `target = self` on all NSMenuItems)
 - [x] `.pkg` archive parser (WE's binary package format)
 - [x] Wallpaper project loader (directory, project.json, .pkg, bare media files)
 - [x] Cursor tracking for interactive wallpapers (normalized coordinates)
-- [x] Scene renderer stub with C bridge interface design
 - [x] CLI argument support for loading wallpapers on launch
 - [x] Audio mute/unmute toggle
 - [x] Gallery window — SwiftUI grid browser with preview thumbnails and tag filtering
 - [x] Fix: occlusion detection for desktop-level windows (macOS reports them as permanently occluded)
+- [x] Performance profiling — CPU frame timing (total / engine / blit split), FPS tracking, process memory (RSS), lifecycle event log, live FPS tooltip on status item
+- [x] Per-wallpaper properties UI — slider, bool, color, combo, textinput controls; floating NSPanel; persisted per-wallpaper in UserDefaults; "Reset to Defaults"
+- [x] WE JavaScript API ~80% coverage — `applyUserProperties` (functional, injects on load + per-change), `applyGeneralProperties`, audio zero-data heartbeat, media stubs, `_weVersion`/`_wePlatform`, `wallpaperGetContentRating`, `wallpaperPlaySound`, `wallpaperRegisterAudioResponsiveGroup`
+- [x] Audio reactivity — `AVAudioEngine` input tap + vDSP FFT → 128 log-spaced bands → web JS + scene `we_set_audio_data`; zero-data heartbeat suppressed when real audio is active
+- [x] App Nap participation — `NSProcessInfo` activity token held while rendering, released on all pause/sleep/occlude paths
 
 ### Remaining
-- [ ] WebM video support (ffmpeg/libvpx integration)
-- [ ] Scene wallpaper rendering (linux-wallpaperengine C++ port)
-- [ ] Per-wallpaper properties UI
-- [ ] Enhanced WE JavaScript API (~80% coverage target)
-- [ ] Audio reactivity (AVAudioEngine tap + FFT)
-- [ ] Frame rate capping (CADisplayLink/CVDisplayLink)
-- [ ] App Nap participation
 - [ ] Metal rendering backend (long-term)
 - [ ] HLSL → Metal shader translation (long-term)
 

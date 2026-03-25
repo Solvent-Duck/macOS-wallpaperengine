@@ -16,13 +16,27 @@ class DesktopWindowManager {
     private var currentProject: WallpaperProject?
     private let occlusionDetector = OcclusionDetector()
     private let cursorTracker = CursorTracker()
+    private let audioReactivity = AudioReactivity()
     private var isVisible = true
     private var isManuallyPaused = false
     private var isSleeping = false
     private var lastRebuildTime: Double = 0
 
+    /// NSProcessInfo activity token held while the wallpaper is actively rendering.
+    /// Prevents macOS App Nap from throttling timer callbacks and the render loop.
+    private var appNapActivity: NSObjectProtocol?
+
+    /// Live property values for the current wallpaper (defaults merged with user overrides).
+    private var propertyValues: [String: String] = [:]
+
     /// The title of the currently loaded wallpaper, if any.
     var currentTitle: String? { currentProject?.title }
+
+    /// Property definitions for the current wallpaper.
+    var currentProperties: [WallpaperProperty] { currentProject?.properties ?? [] }
+
+    /// Current (user-modified or default) property values.
+    var currentPropertyValues: [String: String] { propertyValues }
 
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
@@ -53,9 +67,31 @@ class DesktopWindowManager {
                          name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
     }
 
+    // MARK: - App Nap
+
+    /// Hold an NSProcessInfo activity token while rendering to prevent App Nap
+    /// from throttling the render loop. Released when the wallpaper is paused or stopped.
+    private func updateAppNapAssertion() {
+        let shouldHold = renderer != nil && canResume
+        if shouldHold && appNapActivity == nil {
+            appNapActivity = ProcessInfo.processInfo.beginActivity(
+                options: .userInitiatedAllowingIdleSystemSleep,
+                reason: "Rendering wallpaper animation"
+            )
+            print("[WallpaperEngine] App Nap assertion acquired")
+        } else if !shouldHold, let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            appNapActivity = nil
+            print("[WallpaperEngine] App Nap assertion released")
+        }
+    }
+
+    // MARK: - Wallpaper Loading
+
     /// Load a wallpaper from a file or directory URL.
     func loadWallpaper(from url: URL) {
         // Stop any existing wallpaper
+        audioReactivity.stop()
         renderer?.stop()
         renderer = nil
 
@@ -71,6 +107,12 @@ class DesktopWindowManager {
 
             let newRenderer = try createRenderer(for: project, fileURL: fileURL)
             renderer = newRenderer
+            PerformanceMonitor.shared.setRenderer(type: project.type.rawValue.capitalized, status: "Playing")
+
+            // Load persisted property values, merge with defaults
+            let saved = loadPropertyValues(for: project)
+            propertyValues = mergedValues(properties: project.properties, saved: saved)
+            newRenderer.applyProperties(project.properties, values: propertyValues)
 
             // Set the renderer's view as content on all desktop windows
             applyRendererToWindows()
@@ -78,9 +120,15 @@ class DesktopWindowManager {
             // Start cursor tracking for interactive wallpapers
             startCursorTracking()
 
-            // Only start playing if the desktop is actually visible
-            if isVisible {
+            // Only start playing if all conditions allow it
+            if canResume {
                 newRenderer.play()
+            }
+            updateAppNapAssertion()
+
+            // Start audio reactivity — forwards frequency data to the renderer at ~30fps
+            audioReactivity.start { [weak self] data in
+                self?.renderer?.receiveAudioData(data)
             }
 
         } catch {
@@ -93,7 +141,9 @@ class DesktopWindowManager {
         isManuallyPaused = true
         renderer?.pause()
         cursorTracker.stop()
+        updateAppNapAssertion()
         PerformanceMonitor.shared.logEvent("Manual pause")
+        PerformanceMonitor.shared.setRendererStatus("Paused")
     }
 
     /// Resume a manually paused wallpaper (still respects occlusion and sleep).
@@ -102,7 +152,9 @@ class DesktopWindowManager {
         if canResume {
             renderer?.play()
             startCursorTracking()
+            PerformanceMonitor.shared.setRendererStatus("Playing")
         }
+        updateAppNapAssertion()
         PerformanceMonitor.shared.logEvent("Manual resume")
     }
 
@@ -122,11 +174,16 @@ class DesktopWindowManager {
     /// Without this, SDL2's atexit handler fires while the main thread is already in
     /// `exit()`, causing a deadlock that prevents the process from exiting cleanly.
     func teardown() {
+        audioReactivity.stop()
         cursorTracker.stop()
         occlusionDetector.stop()
         renderer?.stop()
         renderer = nil
         currentProject = nil
+        if let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            appNapActivity = nil
+        }
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         for window in windows {
@@ -138,14 +195,27 @@ class DesktopWindowManager {
 
     /// Stop and remove the current wallpaper.
     func clearWallpaper() {
+        audioReactivity.stop()
         cursorTracker.stop()
         renderer?.stop()
         renderer = nil
         currentProject = nil
         isManuallyPaused = false
+        propertyValues = [:]
+        updateAppNapAssertion()
+        PerformanceMonitor.shared.setRenderer(type: "None", status: "Stopped")
         for window in windows {
             window.contentView = nil
         }
+    }
+
+    /// Apply a single property change from the UI and persist it.
+    func applyProperty(key: String, value: String) {
+        propertyValues[key] = value
+        if let prop = currentProject?.properties.first(where: { $0.key == key }) {
+            renderer?.applyProperty(prop, value: value)
+        }
+        savePropertyValues()
     }
 
     // MARK: - Private
@@ -243,6 +313,7 @@ class DesktopWindowManager {
             cursorTracker.stop()
             print("[WallpaperEngine] Desktop fully occluded — pausing renderer")
         }
+        updateAppNapAssertion()
         PerformanceMonitor.shared.logEvent("Occlusion: \(visible ? "visible" : "occluded")")
     }
 
@@ -251,6 +322,7 @@ class DesktopWindowManager {
         isSleeping = true
         renderer?.pause()
         cursorTracker.stop()
+        updateAppNapAssertion()
         print("[WallpaperEngine] Sleep/lock — pausing renderer (\(notification.name.rawValue))")
         PerformanceMonitor.shared.logEvent("Sleep: \(notification.name.rawValue)")
     }
@@ -267,8 +339,31 @@ class DesktopWindowManager {
             }
             startCursorTracking()
         }
+        updateAppNapAssertion()
         print("[WallpaperEngine] Wake/unlock — \(canResume ? "resuming" : "staying paused") (\(notification.name.rawValue))")
         PerformanceMonitor.shared.logEvent("Wake: \(notification.name.rawValue)")
+    }
+
+    // MARK: - Property Persistence
+
+    private func userDefaultsKey(for project: WallpaperProject) -> String {
+        "WallpaperProperties.\(project.directoryURL?.path ?? project.title)"
+    }
+
+    private func loadPropertyValues(for project: WallpaperProject) -> [String: String] {
+        let key = userDefaultsKey(for: project)
+        return UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+    }
+
+    private func savePropertyValues() {
+        guard let project = currentProject else { return }
+        UserDefaults.standard.set(propertyValues, forKey: userDefaultsKey(for: project))
+    }
+
+    private func mergedValues(properties: [WallpaperProperty], saved: [String: String]) -> [String: String] {
+        var merged = [String: String]()
+        for p in properties { merged[p.key] = saved[p.key] ?? p.defaultValue }
+        return merged
     }
 
     @objc private func screensDidChange(_ notification: Notification) {

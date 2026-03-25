@@ -13,7 +13,7 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
             return URL(fileURLWithPath: saved)
         }
         return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Wallpaper Projects")
+            .appendingPathComponent("Library/Application Support/Steam/steamapps/workshop/content/431960")
     }
 
     func showGallery(onSelect: @escaping (URL) -> Void) {

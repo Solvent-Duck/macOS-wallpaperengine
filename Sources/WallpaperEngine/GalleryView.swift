@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Main gallery view displaying a grid of installed wallpapers
-/// with search and tag filtering.
+/// with search, tag filtering, type filtering, and sort controls.
 struct GalleryView: View {
     @ObservedObject var viewModel: GalleryViewModel
 
@@ -9,9 +9,9 @@ struct GalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tag filter bar
-            if !viewModel.allTags.isEmpty {
-                tagFilterBar
+            // Filter bar (type chips + tag chips)
+            if !viewModel.allTags.isEmpty || viewModel.availableTypes.count > 1 {
+                filterBar
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(.bar)
@@ -45,15 +45,97 @@ struct GalleryView: View {
             }
         }
         .searchable(text: $viewModel.searchText, prompt: "Search wallpapers")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                sortMenu
+            }
+        }
         .frame(minWidth: 500, minHeight: 400)
     }
 
-    private var tagFilterBar: some View {
+    // MARK: - Sort Menu
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(GallerySortOrder.allCases, id: \.self) { order in
+                Button {
+                    viewModel.sortOrder = order
+                } label: {
+                    if viewModel.sortOrder == order {
+                        Label(order.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(order.rawValue)
+                    }
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+    }
+
+    // MARK: - Filter Bar
+
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Type chips (only when more than one type is present)
+            if viewModel.availableTypes.count > 1 {
+                typeFilterRow
+            }
+
+            // Tag chips
+            if !viewModel.allTags.isEmpty {
+                tagChipRow
+            }
+
+            // AND/OR toggle + Clear button
+            if !viewModel.selectedTags.isEmpty || viewModel.hasActiveFilters {
+                HStack(spacing: 8) {
+                    if !viewModel.selectedTags.isEmpty {
+                        Picker("", selection: $viewModel.tagFilterMode) {
+                            Text("Any tag").tag(TagFilterMode.any)
+                            Text("All tags").tag(TagFilterMode.all)
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+
+                    Spacer()
+
+                    if viewModel.hasActiveFilters {
+                        Button("Clear") { viewModel.clearFilters() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    private var typeFilterRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach([WallpaperType.video, .web, .scene], id: \.self) { type in
+                    if viewModel.availableTypes.contains(type) {
+                        TagChip(
+                            tag: type.rawValue.capitalized,
+                            count: nil,
+                            isSelected: viewModel.selectedTypes.contains(type)
+                        ) {
+                            viewModel.toggleType(type)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var tagChipRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(viewModel.allTags, id: \.self) { tag in
                     TagChip(
                         tag: tag,
+                        count: viewModel.tagCount(for: tag),
                         isSelected: viewModel.selectedTags.contains(tag)
                     ) {
                         viewModel.toggleTag(tag)
@@ -68,18 +150,30 @@ struct GalleryView: View {
 
 private struct TagChip: View {
     let tag: String
+    let count: Int?
     let isSelected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(tag)
-                .font(.caption)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.15))
-                .foregroundStyle(isSelected ? .white : .primary)
-                .clipShape(Capsule())
+            HStack(spacing: 4) {
+                Text(tag)
+                    .font(.caption)
+
+                if let count {
+                    Text("\(count)")
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(isSelected ? Color.white.opacity(0.25) : Color.secondary.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.15))
+            .foregroundStyle(isSelected ? .white : .primary)
+            .clipShape(Capsule())
         }
         .buttonStyle(.plain)
     }

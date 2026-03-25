@@ -22,8 +22,6 @@ A macOS application that plays animated [Wallpaper Engine](https://store.steampo
 
 ## Building
 
-The build has two stages: compiling the C++ rendering engine into a static library, then building the Swift application that links against it.
-
 ### 1. Install dependencies
 
 ```bash
@@ -34,35 +32,28 @@ xcode-select --install
 brew install cmake glew glfw sdl2 lz4 ffmpeg freeglut glm
 ```
 
-### 2. Build the C++ engine bridge
-
-This initializes git submodules (linux-wallpaperengine and its nested dependencies like glslang, SPIRV-Cross, quickjs, kissfft), configures CMake, and compiles everything into a static library.
+### 2. Build and run
 
 ```bash
+./run.sh
+```
+
+`run.sh` handles everything in order:
+1. Builds the C++ engine bridge (`./build-bridge.sh`) — only on first run or if the library is missing; takes 2–5 minutes
+2. Compiles the Swift app (`swift build -c release`)
+3. Launches the binary
+
+On subsequent runs the bridge step is skipped, so startup is fast.
+
+#### Manual build steps (if needed)
+
+If you want to build without launching, or need a clean rebuild:
+
+```bash
+# Step 1 — C++ bridge (once, or when engine code changes)
 ./build-bridge.sh
-```
 
-On success you'll see:
-
-```
-=== Build complete ===
-Static library: build/lib/libwallpaperengine.a (X.XM)
-Bridge header:  build/include/WEBridge.h
-```
-
-This step only needs to be repeated if the C++ engine code or bridge changes. Typical build time is 2-5 minutes depending on hardware.
-
-### 3. Build the Swift application
-
-```bash
-swift build
-```
-
-The executable is produced at `.build/debug/WallpaperEngine`.
-
-For a release build:
-
-```bash
+# Step 2 — Swift app
 swift build -c release
 ```
 
@@ -73,7 +64,7 @@ The release executable is at `.build/release/WallpaperEngine`.
 | Problem | Fix |
 |---------|-----|
 | `library not found for -lglfw` | `brew install glfw` and make sure `/opt/homebrew/lib` is on the linker path (it is by default in Package.swift) |
-| `library not found for -lwallpaperengine` | Run `./build-bridge.sh` first — the C++ engine must be compiled before `swift build` |
+| `library not found for -lwallpaperengine` | Run `./run.sh` (or `./build-bridge.sh` manually) — the C++ bridge must be compiled before `swift build` |
 | `submodule update --init` hangs | Check network; the engine has ~9 nested submodules to clone |
 | CMake can't find OpenGL/GLEW/SDL2 | `brew install glew sdl2 freeglut` — CMake searches `/opt/homebrew` and `/usr/local` |
 | Linker warnings about "newer macOS version" | Safe to ignore — vendored libraries built for a newer deployment target than the Swift package minimum |
@@ -83,8 +74,7 @@ The release executable is at `.build/release/WallpaperEngine`.
 ```bash
 # Remove all build artifacts and start fresh
 rm -rf build .build
-./build-bridge.sh
-swift build
+./run.sh
 ```
 
 ## Usage
@@ -92,19 +82,19 @@ swift build
 ### Launch
 
 ```bash
-# Launch with menu bar controls
-.build/debug/WallpaperEngine
+# Build (if needed) and launch
+./run.sh
 
-# Launch and immediately load a wallpaper
-.build/debug/WallpaperEngine "/path/to/wallpaper/directory"
+# Build (if needed) and immediately load a wallpaper
+./run.sh "/path/to/wallpaper/directory"
 
-# Launch a release build
+# Launch the already-built binary directly
 .build/release/WallpaperEngine
 ```
 
 The app runs as a menu bar accessory (no Dock icon) — look for the photo icon in the menu bar.
 
-**Quit behavior:** this is a menu bar accessory app, so quit handling is routed through the status-item menu instead of a system-wide keyboard monitor. Use the menu bar item to quit reliably. The menu still advertises `Cmd+Q`, but you should think of the menu item itself as the supported path.
+**Quit behavior:** this is a menu bar accessory app, so quit handling is routed through the status-item menu instead of a system-wide keyboard monitor. The current quit path performs explicit renderer teardown and then exits immediately, working around a crash in linked C++ scene-renderer finalizers during normal `NSApplication.terminate()` shutdown.
 
 ### Menu Bar
 
@@ -159,6 +149,12 @@ You can also load `.pkg` files (Wallpaper Engine's packed format) directly via *
 | Application | Not supported | Windows executables — not feasible on macOS |
 
 **Note:** WebM videos are automatically transcoded to MP4 via ffmpeg on first load (requires ffmpeg from Homebrew).
+
+## Automation Direction
+
+Automation is planned as a **post-core quality-of-life layer**, not part of the current rendering/compatibility push. The intended agent-facing design is a small companion CLI backed by a local control channel into the running app, with machine-readable commands and JSON responses rather than GUI scripting.
+
+Long-term, this should support tag-driven wallpaper selection so an external agent can choose wallpapers based on factors like local weather, time of day, season, and date, then apply them through a stable command surface.
 
 ## Architecture
 

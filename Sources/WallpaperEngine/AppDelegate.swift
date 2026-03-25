@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 /// Application delegate managing the menu bar item and desktop window lifecycle.
 ///
@@ -17,6 +18,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var pauseResumeItem: NSMenuItem!
     private var audioToggleItem: NSMenuItem!
     private var clearItem: NSMenuItem!
+    private var propertiesItem: NSMenuItem!
+
+    private var propertiesController: PropertiesWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBar()
@@ -58,50 +62,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Actions
-        menu.addItem(NSMenuItem(
-            title: "Browse Wallpapers…",
-            action: #selector(openGallery),
-            keyEquivalent: "b"
-        ))
-        menu.addItem(NSMenuItem(
-            title: "Select Wallpaper…",
-            action: #selector(selectWallpaper),
-            keyEquivalent: "o"
-        ))
+        let browseItem = NSMenuItem(title: "Browse Wallpapers…", action: #selector(openGallery), keyEquivalent: "b")
+        browseItem.target = self
+        menu.addItem(browseItem)
 
-        pauseResumeItem = NSMenuItem(
-            title: "Pause",
-            action: #selector(togglePause),
-            keyEquivalent: "p"
-        )
-        menu.addItem(pauseResumeItem)
+        let selectItem = NSMenuItem(title: "Select Wallpaper…", action: #selector(selectWallpaper), keyEquivalent: "o")
+        selectItem.target = self
+        menu.addItem(selectItem)
 
-        audioToggleItem = NSMenuItem(
-            title: "Unmute Audio",
-            action: #selector(toggleAudio),
-            keyEquivalent: "m"
-        )
-        menu.addItem(audioToggleItem)
-
-        clearItem = NSMenuItem(
-            title: "Clear Wallpaper",
-            action: #selector(clearWallpaper),
-            keyEquivalent: ""
-        )
-        menu.addItem(clearItem)
-
-        menu.addItem(NSMenuItem(
-            title: "Copy Diagnostics",
-            action: #selector(copyDiagnostics),
-            keyEquivalent: "d"
-        ))
+        propertiesItem = NSMenuItem(title: "Wallpaper Properties…", action: #selector(openProperties), keyEquivalent: "i")
+        propertiesItem.target = self
+        menu.addItem(propertiesItem)
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(
-            title: "Quit WallpaperEngine",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        ))
+
+        pauseResumeItem = NSMenuItem(title: "Pause", action: #selector(togglePause), keyEquivalent: "p")
+        pauseResumeItem.target = self
+        menu.addItem(pauseResumeItem)
+
+        audioToggleItem = NSMenuItem(title: "Unmute Audio", action: #selector(toggleAudio), keyEquivalent: "m")
+        audioToggleItem.target = self
+        menu.addItem(audioToggleItem)
+
+        clearItem = NSMenuItem(title: "Clear Wallpaper", action: #selector(clearWallpaper), keyEquivalent: "")
+        clearItem.target = self
+        menu.addItem(clearItem)
+
+        let diagItem = NSMenuItem(title: "Copy Diagnostics", action: #selector(copyDiagnostics), keyEquivalent: "d")
+        diagItem.target = self
+        menu.addItem(diagItem)
+
+        menu.addItem(NSMenuItem.separator())
+        let quitItem = NSMenuItem(title: "Quit WallpaperEngine", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
 
         statusItem.menu = menu
         updateMenuState()
@@ -116,15 +110,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         audioToggleItem.title = windowManager.isMuted ? "Unmute Audio" : "Mute Audio"
         audioToggleItem.isEnabled = hasWallpaper && windowManager.supportsAudio
         clearItem.isEnabled = hasWallpaper
+        propertiesItem.isEnabled = hasWallpaper && !windowManager.currentProperties.isEmpty
     }
 
     // MARK: - Actions
+
+    @objc private func openProperties() {
+        let props = windowManager.currentProperties
+        let vals  = windowManager.currentPropertyValues
+        guard !props.isEmpty, let title = windowManager.currentTitle else { return }
+        if propertiesController == nil { propertiesController = PropertiesWindowController() }
+        propertiesController?.show(
+            title: title,
+            properties: props,
+            values: vals,
+            onChange: { [weak self] key, value in
+                self?.windowManager.applyProperty(key: key, value: value)
+            }
+        )
+    }
 
     @objc private func openGallery() {
         galleryController.showGallery { [weak self] url in
             self?.windowManager.loadWallpaper(from: url)
             self?.isPaused = false
             self?.updateMenuState()
+            self?.refreshPropertiesWindowIfNeeded()
         }
     }
 
@@ -143,6 +154,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.windowManager.loadWallpaper(from: url)
             self?.isPaused = false
             self?.updateMenuState()
+            self?.refreshPropertiesWindowIfNeeded()
         }
     }
 
@@ -172,21 +184,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager.clearWallpaper()
         isPaused = false
         updateMenuState()
+        propertiesController?.close()
     }
 
     @objc private func quitApp() {
-        // Use an explicit target/action for the status-item menu instead of
-        // relying on responder-chain delivery to NSApplication. Accessory apps
-        // with menu-bar-only UI can be finicky here, and we also want our
-        // teardown path to run through the normal termination lifecycle.
-        NSApplication.shared.terminate(nil)
+        // Explicitly tear down renderer/window resources before process exit.
+        // The linked scene stack currently crashes during C++ global finalizers
+        // (observed in glslang ShFinalize during NSApplication.terminate -> exit).
+        // After manual teardown, use _exit(0) to bypass the broken finalizer path.
+        windowManager.teardown()
+        statusItem?.menu = nil
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
+        for window in NSApplication.shared.windows {
+            window.close()
+        }
+        fflush(stdout)
+        fflush(stderr)
+        _exit(0)
+    }
+
+    /// If the properties panel is open, update it for the newly loaded wallpaper.
+    /// If the new wallpaper has no properties, close the panel.
+    private func refreshPropertiesWindowIfNeeded() {
+        guard let controller = propertiesController else { return }
+        let props = windowManager.currentProperties
+        if props.isEmpty {
+            controller.close()
+        } else if let title = windowManager.currentTitle {
+            controller.show(
+                title: title,
+                properties: props,
+                values: windowManager.currentPropertyValues,
+                onChange: { [weak self] key, value in
+                    self?.windowManager.applyProperty(key: key, value: value)
+                }
+            )
+        }
     }
 }
 
 // MARK: - NSMenuDelegate
 
 extension AppDelegate: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
+    @objc func menuWillOpen(_ menu: NSMenu) {
         updateMenuState()
+        let fps = PerformanceMonitor.shared.currentFPS
+        if fps > 0 {
+            statusItem?.button?.toolTip = String(format: "Wallpaper Engine — %.1f fps", fps)
+        } else {
+            statusItem?.button?.toolTip = "Wallpaper Engine"
+        }
     }
 }

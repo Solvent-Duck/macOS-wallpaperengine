@@ -32,6 +32,19 @@ protocol WallpaperRenderer: AnyObject {
     /// Attempt recovery after display sleep/wake if rendering is broken.
     /// Default implementation is a no-op. Only SceneRenderer overrides this.
     func recoverFromSleep()
+
+    /// Apply the full set of user properties. Called once after the wallpaper
+    /// loads and again whenever the user resets to defaults.
+    func applyProperties(_ properties: [WallpaperProperty], values: [String: String])
+
+    /// Apply a single user property change at runtime.
+    func applyProperty(_ property: WallpaperProperty, value: String)
+
+    /// Forward audio frequency data from the host to the wallpaper.
+    ///
+    /// `data` contains `bandCount` normalized amplitude values (0.0–1.0),
+    /// matching Wallpaper Engine's 128-band format.
+    func receiveAudioData(_ data: [Float])
 }
 
 extension WallpaperRenderer {
@@ -42,4 +55,7 @@ extension WallpaperRenderer {
         set {}
     }
     func recoverFromSleep() {}
+    func applyProperties(_ properties: [WallpaperProperty], values: [String: String]) {}
+    func applyProperty(_ property: WallpaperProperty, value: String) {}
+    func receiveAudioData(_ data: [Float]) {}
 }
