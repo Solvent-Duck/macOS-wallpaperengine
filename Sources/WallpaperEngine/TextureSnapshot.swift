@@ -135,19 +135,14 @@ enum TextureSnapshot {
     }
 
     private static func blackFrameReport(from rgba: UnsafePointer<UInt8>, width: Int, height: Int) -> ScreenshotReport {
-        let sampleColumns = min(max(width / 160, 1), 10)
-        let sampleRows = min(max(height / 90, 1), 10)
         let threshold: UInt8 = 10
 
-        var sampleCount = 0
         var blackCount = 0
+        let sampleCount = width * height
 
-        for rowIndex in 0..<sampleRows {
-            let y = sampleRows == 1 ? height / 2 : rowIndex * (height - 1) / (sampleRows - 1)
-            for columnIndex in 0..<sampleColumns {
-                let x = sampleColumns == 1 ? width / 2 : columnIndex * (width - 1) / (sampleColumns - 1)
+        for y in 0..<height {
+            for x in 0..<width {
                 let pixel = rgba.advanced(by: (y * width + x) * 4)
-                sampleCount += 1
                 if pixel[0] < threshold && pixel[1] < threshold && pixel[2] < threshold {
                     blackCount += 1
                 }

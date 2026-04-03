@@ -56,3 +56,22 @@ Functionality and impact:
   - `deep_space`: `fail` (`black_frame: true`)
   - `shimmering_particles`: `fail` (`black_frame: true`)
 - This gives Phase 2+ work a concrete regression target instead of anecdotal testing.
+
+### Phase 1 Black-Frame Investigation
+
+Changes:
+- Fixed Apple scene clearing so Metal-backed framebuffers are explicitly cleared before scene draws.
+- Added Apple-side fallback decoding for non-power-of-two compressed textures by loading sibling image assets into padded Metal textures when direct TEXB upload is invalid on Metal.
+- Corrected the Metal clip-space transform for `g_ModelViewProjectionMatrix` so OpenGL-authored scene geometry is not clipped away on Apple.
+- Implemented Metal particle rendering for custom indexed geometry instead of short-circuiting the Apple path.
+- Replaced sparse black-frame sampling with a full-buffer scan in screenshot analysis so particle-heavy scenes are classified from the actual captured pixels.
+
+Functionality and impact:
+- `deep_space` now renders visible output instead of a fully black capture; focused verification reported `black_frame: false` with `black_pixels: 0`.
+- `shimmering_particles` now renders visible particle output on Metal; focused verification reported `black_frame: false` after the renderer fix and screenshot-classifier correction.
+- Full suite verification now passes for the current local corpus:
+  - `deep_space`: `pass`
+  - `neon_sunset`: `pass`
+  - `shimmering_particles`: `pass`
+- Verified report: `CompatibilitySuite/reports/run_2026-04-03T14-20-33Z.json`
+- Residual note: particle scheme colors still need follow-up validation because the current Metal path is rendering with neutralized color inputs for this fixture, but this no longer blocks extraction readiness for the black-frame gate.
