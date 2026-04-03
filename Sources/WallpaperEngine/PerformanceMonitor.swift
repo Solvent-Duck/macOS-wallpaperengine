@@ -1,13 +1,21 @@
 import Foundation
 import Darwin
 
+struct BenchmarkReport: Codable {
+    let cpu_avg_ms: Double
+    let cpu_p95_ms: Double
+    let fps_avg: Double
+    let memory_peak_mb: Double
+    let sample_count: Int
+}
+
 /// Lightweight performance diagnostics for frame timing and lifecycle events.
 ///
 /// Maintains ring buffers of recent frame timings (total, engine, blit, interval)
 /// and timestamped lifecycle events. Access via `PerformanceMonitor.shared`.
 /// Thread-safe — `recordFrame` is called from the CVDisplayLink thread.
 final class PerformanceMonitor {
-    static let shared = PerformanceMonitor()
+    nonisolated(unsafe) static let shared = PerformanceMonitor()
 
     // MARK: - Renderer Identity
 
@@ -25,6 +33,7 @@ final class PerformanceMonitor {
     private var frameCount = 0
     private var droppedFrames = 0
     private let frameBudgetMs = 33.3    // 30fps target
+    private var peakMemoryBytes: UInt64 = 0
 
     // MARK: - Lifecycle Events
 
@@ -60,6 +69,8 @@ final class PerformanceMonitor {
         frameIndex  += 1
         frameCount  += 1
         if totalMs > frameBudgetMs { droppedFrames += 1 }
+        let memory = Self.processMemoryBytes()
+        if memory > peakMemoryBytes { peakMemoryBytes = memory }
         lock.unlock()
     }
 
@@ -88,6 +99,62 @@ final class PerformanceMonitor {
         lock.lock()
         _rendererStatus = status
         lock.unlock()
+    }
+
+    func resetFrameStatistics() {
+        lock.lock()
+        frameTimes = [Double](repeating: 0, count: bufferSize)
+        engineTimes = [Double](repeating: 0, count: bufferSize)
+        blitTimes = [Double](repeating: 0, count: bufferSize)
+        frameIntervals = [Double](repeating: 0, count: bufferSize)
+        frameIndex = 0
+        frameCount = 0
+        droppedFrames = 0
+        peakMemoryBytes = Self.processMemoryBytes()
+        lock.unlock()
+    }
+
+    func benchmarkReport() -> BenchmarkReport {
+        lock.lock()
+        let count = min(frameCount, bufferSize)
+        var samples = [Double]()
+        var intervals = [Double]()
+
+        if count > 0 {
+            let start = frameIndex - count
+            for i in start..<frameIndex {
+                let idx = i % bufferSize
+                samples.append(frameTimes[idx])
+                intervals.append(frameIntervals[idx])
+            }
+        }
+
+        let peakMemory = peakMemoryBytes
+        lock.unlock()
+
+        guard !samples.isEmpty else {
+            return BenchmarkReport(
+                cpu_avg_ms: 0,
+                cpu_p95_ms: 0,
+                fps_avg: 0,
+                memory_peak_mb: Double(peakMemory) / (1024.0 * 1024.0),
+                sample_count: 0
+            )
+        }
+
+        let sorted = samples.sorted()
+        let avg = samples.reduce(0, +) / Double(samples.count)
+        let p95Index = min(max(Int(ceil(Double(sorted.count) * 0.95)) - 1, 0), sorted.count - 1)
+        let validIntervals = intervals.filter { $0 > 0 }
+        let avgInterval = validIntervals.isEmpty ? 0 : validIntervals.reduce(0, +) / Double(validIntervals.count)
+
+        return BenchmarkReport(
+            cpu_avg_ms: avg,
+            cpu_p95_ms: sorted[p95Index],
+            fps_avg: avgInterval > 0 ? 1000.0 / avgInterval : 0,
+            memory_peak_mb: Double(peakMemory) / (1024.0 * 1024.0),
+            sample_count: samples.count
+        )
     }
 
     // MARK: - Live Queries

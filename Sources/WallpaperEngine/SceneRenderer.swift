@@ -1,30 +1,52 @@
 import AppKit
-import OpenGL.GL3
+import Foundation
+import Metal
+import MetalKit
+import QuartzCore
 import CoreVideo
 import CWEBridge
 
-/// Renders Wallpaper Engine scene wallpapers via linux-wallpaperengine.
+/// Renders Wallpaper Engine scene wallpapers through the embedded native bridge using Metal.
 ///
-/// Uses a C bridge (`WEBridge.h`) to the linux-wallpaperengine C++ engine,
-/// which handles scene parsing, shader compilation (HLSL → SPIRV → GLSL 330),
-/// and OpenGL 3.3 rendering. The engine renders into a shared OpenGL context;
-/// this class blits the result into an `NSOpenGLView` via a textured quad.
+/// Uses `WEBridge.h` to talk to the embedded scene runtime, which handles scene parsing,
+/// shader compilation, and frame rendering into `MTLTexture` objects that are blitted into
+/// an `MTKView`.
 ///
 /// ## Performance
 /// - Rendering is driven by a CVDisplayLink capped at 30fps.
 /// - When paused, the CVDisplayLink is stopped entirely (zero GPU cost).
-/// - The engine's output texture is used directly (zero-copy shared GL context).
+/// - No pixel readback: the engine texture is blitted directly (zero-copy Metal path).
+@MainActor
 class SceneRenderer: WallpaperRenderer {
     let view: NSView
     private let wallpaperPath: String
     private var context: WEContextRef?
-    private var glView: SceneOpenGLView?
+    private var metalView: SceneMetalView?
     private var displayLink: CVDisplayLink?
     private var lastRenderTime: Double = 0
     private var isPlaying = false
     private var consecutiveZeroTextureFrames = 0
     private let zeroTextureThreshold = 10
     private(set) var needsRecovery = false
+    private var renderedFrameCount = 0
+    private var screenshotRequest: ScreenshotRequest?
+    private var benchmarkRequest: BenchmarkRequest?
+
+    // Shared Metal device and command queue (created once, reused across context recreations).
+    private let device: MTLDevice
+    private let commandQueue: MTLCommandQueue
+
+    private struct ScreenshotRequest {
+        let targetFrame: Int
+        let outputURL: URL
+        let completion: (Result<Void, Error>) -> Void
+    }
+
+    private struct BenchmarkRequest {
+        let deadline: CFTimeInterval
+        let outputURL: URL
+        let completion: (Result<Void, Error>) -> Void
+    }
 
     /// Default path to Wallpaper Engine's shared assets directory.
     /// Users can override this via UserDefaults "WEAssetsPath".
@@ -32,7 +54,6 @@ class SceneRenderer: WallpaperRenderer {
         if let custom = UserDefaults.standard.string(forKey: "WEAssetsPath"), !custom.isEmpty {
             return custom
         }
-        // Common locations for WE assets copied from a Windows install
         let candidates = [
             NSHomeDirectory() + "/wallpaper_engine/assets",
             NSHomeDirectory() + "/Library/Application Support/wallpaper_engine/assets",
@@ -50,41 +71,46 @@ class SceneRenderer: WallpaperRenderer {
     init(directoryURL: URL) {
         self.wallpaperPath = directoryURL.path
 
-        // Create the GL view first with a placeholder; we'll share the engine's context once created
+        guard let dev = MTLCreateSystemDefaultDevice() else {
+            fatalError("[SceneRenderer] No Metal device available")
+        }
+        guard let queue = dev.makeCommandQueue() else {
+            fatalError("[SceneRenderer] Failed to create MTLCommandQueue")
+        }
+        self.device = dev
+        self.commandQueue = queue
+
         let container = NSView()
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.black.cgColor
         self.view = container
-
-        // Defer engine initialization to play() so we know the view's frame
     }
 
     func play() {
         if isPlaying { return }
 
         let frame = view.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 1920, height: 1080) : view.bounds
-        let width = Int32(frame.width)
+        let width  = Int32(frame.width)
         let height = Int32(frame.height)
 
-        // Create the C++ engine context if not already done
         if context == nil {
-            print("[SceneRenderer] Creating engine context: \(width)x\(height), assets: \(Self.assetsPath)")
-            guard let ctx = we_create_context(wallpaperPath, Self.assetsPath, width, height) else {
-                print("[SceneRenderer] Failed to create engine context for: \(wallpaperPath)")
+            print("[SceneRenderer] Creating Metal engine context: \(width)x\(height), assets: \(Self.assetsPath)")
+
+            let devicePtr       = Unmanaged.passUnretained(device).toOpaque()
+            let commandQueuePtr = Unmanaged.passUnretained(commandQueue).toOpaque()
+
+            guard let ctx = we_create_context_metal(
+                wallpaperPath, Self.assetsPath, width, height,
+                devicePtr, commandQueuePtr
+            ) else {
+                print("[SceneRenderer] Failed to create Metal engine context for: \(wallpaperPath)")
                 showError("Failed to initialize scene renderer")
                 return
             }
             context = ctx
-            print("[SceneRenderer] Engine context created successfully")
+            print("[SceneRenderer] Metal engine context created successfully")
 
-            // Set up the shared GL view
-            if let nsglContext = we_get_gl_context(ctx) {
-                print("[SceneRenderer] Got NSGL context for sharing")
-                setupGLView(sharingContext: nsglContext, engineContext: ctx)
-            } else {
-                print("[SceneRenderer] Warning: Could not get GL context for sharing")
-                setupGLView(sharingContext: nil, engineContext: ctx)
-            }
+            setupMetalView(engineContext: ctx)
         }
 
         we_set_paused(context, 0)
@@ -107,8 +133,8 @@ class SceneRenderer: WallpaperRenderer {
             we_destroy_context(ctx)
             context = nil
         }
-        glView?.removeFromSuperview()
-        glView = nil
+        metalView?.removeFromSuperview()
+        metalView = nil
         isPlaying = false
         print("[SceneRenderer] Stopped")
     }
@@ -121,10 +147,7 @@ class SceneRenderer: WallpaperRenderer {
     var supportsAudio: Bool { true }
 
     var isMuted: Bool = true {
-        didSet {
-            // Audio muting would be handled through the engine's audio context
-            // For v1, audio plays through SDL independently
-        }
+        didSet {}
     }
 
     func applyProperties(_ properties: [WallpaperProperty], values: [String: String]) {
@@ -155,58 +178,42 @@ class SceneRenderer: WallpaperRenderer {
             we_destroy_context(ctx)
             context = nil
         }
-        glView?.removeFromSuperview()
-        glView = nil
+        metalView?.removeFromSuperview()
+        metalView = nil
         isPlaying = false
         consecutiveZeroTextureFrames = 0
         needsRecovery = false
         play()
     }
 
-    deinit {
-        stop()
+    func requestScreenshot(outputURL: URL, afterFrames: Int = 60, completion: @escaping (Result<Void, Error>) -> Void) {
+        screenshotRequest = ScreenshotRequest(
+            targetFrame: renderedFrameCount + max(afterFrames, 1),
+            outputURL: outputURL,
+            completion: completion
+        )
+    }
+
+    func requestBenchmark(outputURL: URL, duration: TimeInterval = 5, completion: @escaping (Result<Void, Error>) -> Void) {
+        PerformanceMonitor.shared.resetFrameStatistics()
+        benchmarkRequest = BenchmarkRequest(
+            deadline: CACurrentMediaTime() + max(duration, 0.1),
+            outputURL: outputURL,
+            completion: completion
+        )
     }
 
     // MARK: - Private
 
-    private func setupGLView(sharingContext: UnsafeMutableRawPointer?, engineContext: WEContextRef) {
-        let attrs: [NSOpenGLPixelFormatAttribute] = [
-            UInt32(NSOpenGLPFAOpenGLProfile), UInt32(NSOpenGLProfileVersion3_2Core),
-            UInt32(NSOpenGLPFAColorSize), 24,
-            UInt32(NSOpenGLPFAAlphaSize), 8,
-            UInt32(NSOpenGLPFADepthSize), 24,
-            UInt32(NSOpenGLPFADoubleBuffer),
-            UInt32(NSOpenGLPFAAccelerated),
-            0
-        ]
+    private func setupMetalView(engineContext: WEContextRef) {
+        let mv = SceneMetalView(frame: view.bounds, device: device, commandQueue: commandQueue)
+        mv.autoresizingMask = [.width, .height]
 
-        guard let pixelFormat = NSOpenGLPixelFormat(attributes: attrs) else {
-            print("[SceneRenderer] Failed to create pixel format")
-            return
-        }
-
-        // Create a shared context if we have the engine's NSGL context
-        let sharedContext: NSOpenGLContext?
-        if let nsgl = sharingContext {
-            sharedContext = Unmanaged<NSOpenGLContext>.fromOpaque(nsgl).takeUnretainedValue()
-        } else {
-            sharedContext = nil
-        }
-
-        let openGLView = SceneOpenGLView(
-            frame: view.bounds,
-            pixelFormat: pixelFormat,
-            sharedContext: sharedContext,
-            engineContext: engineContext
-        )
-        openGLView.autoresizingMask = [.width, .height]
-
-        // Remove any existing subviews (error labels, etc.)
         view.subviews.forEach { $0.removeFromSuperview() }
-        view.addSubview(openGLView)
-        openGLView.frame = view.bounds
+        view.addSubview(mv)
+        mv.frame = view.bounds
 
-        self.glView = openGLView
+        self.metalView = mv
     }
 
     private func showError(_ message: String) {
@@ -237,10 +244,13 @@ class SceneRenderer: WallpaperRenderer {
         lastRenderTime = CACurrentMediaTime()
 
         let renderer = Unmanaged.passUnretained(self)
-        CVDisplayLinkSetOutputCallback(link, { (_, inNow, inOutputTime, _, _, userInfo) -> CVReturn in
+        CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, userInfo) -> CVReturn in
             guard let userInfo else { return kCVReturnError }
             let renderer = Unmanaged<SceneRenderer>.fromOpaque(userInfo).takeUnretainedValue()
-            renderer.displayLinkFired()
+            // Dispatch to the main actor — displayLinkFired() touches MTKView and
+            // NSView APIs that are @MainActor-isolated. At 30 fps the dispatch
+            // overhead (~1 µs) is well within budget.
+            DispatchQueue.main.async { renderer.displayLinkFired() }
             return kCVReturnSuccess
         }, renderer.toOpaque())
 
@@ -258,26 +268,26 @@ class SceneRenderer: WallpaperRenderer {
         let now = CACurrentMediaTime()
         let elapsed = now - lastRenderTime
 
-        // Cap at 30fps: skip frames when less than ~33ms have elapsed
+        // Cap at 30fps
         guard elapsed >= (1.0 / 30.0) else { return }
 
         let delta = elapsed
         lastRenderTime = now
 
-        guard let ctx = context, let glView = glView else { return }
+        guard let ctx = context, let mv = metalView else { return }
 
         let renderStart = CACurrentMediaTime()
-        let timing = glView.renderFrame(engineContext: ctx, deltaTime: delta)
+        let timing = mv.renderFrame(engineContext: ctx, deltaTime: delta)
         let totalMs = (CACurrentMediaTime() - renderStart) * 1000.0
-        let intervalMs = elapsed * 1000.0
+        renderedFrameCount += 1
+
         PerformanceMonitor.shared.recordFrame(
             totalMs: totalMs,
             engineMs: timing.engineMs,
             blitMs: timing.blitMs,
-            intervalMs: intervalMs
+            intervalMs: elapsed * 1000.0
         )
 
-        // Track consecutive frames with no texture output (possible broken GL state after wake)
         if timing.gotTexture {
             consecutiveZeroTextureFrames = 0
         } else {
@@ -292,195 +302,195 @@ class SceneRenderer: WallpaperRenderer {
                 }
             }
         }
+
+        if let request = screenshotRequest, renderedFrameCount >= request.targetFrame {
+            screenshotRequest = nil
+            do {
+                try mv.capturePNG(to: request.outputURL)
+                PerformanceMonitor.shared.logEvent("Screenshot captured: \(request.outputURL.path)")
+                request.completion(.success(()))
+            } catch {
+                request.completion(.failure(error))
+            }
+        }
+
+        if let request = benchmarkRequest, now >= request.deadline {
+            benchmarkRequest = nil
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(PerformanceMonitor.shared.benchmarkReport())
+                try FileManager.default.createDirectory(at: request.outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: request.outputURL)
+                PerformanceMonitor.shared.logEvent("Benchmark captured: \(request.outputURL.path)")
+                request.completion(.success(()))
+            } catch {
+                request.completion(.failure(error))
+            }
+        }
     }
 }
 
-// MARK: - SceneOpenGLView
+// MARK: - SceneMetalView
 
-/// NSOpenGLView subclass that displays the engine's rendered output.
+/// MTKView subclass that blits the engine's rendered MTLTexture to screen.
 ///
-/// Shares the OpenGL context with the C++ engine so the engine's output texture
-/// is directly accessible. Draws a fullscreen textured quad each frame.
-private class SceneOpenGLView: NSOpenGLView {
-    private var engineContext: WEContextRef?
-    private var blitProgram: GLuint = 0
-    private var quadVAO: GLuint = 0
-    private var quadVBO: GLuint = 0
-    private var texUniform: GLint = 0
+/// Each frame: calls `we_render_frame()` (engine commits its own command buffer with all
+/// scene render passes), then blits the resulting MTLTexture to the CAMetalLayer drawable
+/// via a simple fullscreen quad.
+private class SceneMetalView: MTKView {
+    private let commandQueue: MTLCommandQueue
+    private var blitPipelineState: MTLRenderPipelineState?
+    private var quadVertexBuffer: MTLBuffer?
+    private var samplerState: MTLSamplerState?
     private var isSetup = false
     private var frameCount = 0
-
-    init(frame: NSRect, pixelFormat: NSOpenGLPixelFormat,
-         sharedContext: NSOpenGLContext?, engineContext: WEContextRef) {
-        self.engineContext = engineContext
-        super.init(frame: frame, pixelFormat: pixelFormat)!
-
-        // If we have a shared context, replace the auto-created one
-        if let shared = sharedContext {
-            let ctx = NSOpenGLContext(format: pixelFormat, share: shared)
-            self.openGLContext = ctx
-        }
-
-        wantsBestResolutionOpenGLSurface = true
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not implemented")
-    }
+    private var lastEngineTexture: MTLTexture?
 
     struct FrameTiming {
         let gotTexture: Bool
-        let engineMs: Double   // time for we_render_frame (CPU stall ≈ GPU work)
-        let blitMs: Double     // time for blit quad draw + buffer flush
+        let engineMs: Double
+        let blitMs: Double
     }
 
-    /// Render a frame. Returns timing breakdown and whether a texture was drawn.
+    init(frame: NSRect, device: MTLDevice, commandQueue: MTLCommandQueue) {
+        self.commandQueue = commandQueue
+        super.init(frame: frame, device: device)
+        self.clearColor = MTLClearColorMake(0, 0, 0, 1)
+        self.colorPixelFormat = .rgba8Unorm
+        self.framebufferOnly = false  // allow reading back if needed in future
+        self.isPaused = true          // we drive rendering manually via CVDisplayLink
+        self.enableSetNeedsDisplay = false
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) not implemented")
+    }
+
     func renderFrame(engineContext ctx: WEContextRef, deltaTime: Double) -> FrameTiming {
-        guard let glContext = openGLContext else {
-            if frameCount == 0 { print("[SceneRenderer] No openGLContext on view") }
-            return FrameTiming(gotTexture: false, engineMs: 0, blitMs: 0)
-        }
-        let cglContext = glContext.cglContextObj!
-
-        CGLLockContext(cglContext)
-
-        // Step 1: Engine renders into its own GLFW context.
-        // we_render_frame calls glfwMakeContextCurrent + glFinish internally,
-        // so this wall-clock time is the true GPU render time for the scene.
+        // Step 1: Engine renders all scene passes into its own MTLTextures and commits.
         let engineStart = CACurrentMediaTime()
         we_render_frame(ctx, deltaTime)
         let engineMs = (CACurrentMediaTime() - engineStart) * 1000.0
 
-        // Step 2: Switch to the view's shared context to blit the texture.
-        glContext.makeCurrentContext()
+        // Step 2: Get the engine's output texture.
+        guard let texPtr = we_get_metal_texture(ctx) else {
+            frameCount += 1
+            return FrameTiming(gotTexture: false, engineMs: engineMs, blitMs: 0)
+        }
 
+        // texPtr is a non-owning borrow (retained by the engine's CFBO for the duration of play()).
+        let engineTex = Unmanaged<AnyObject>.fromOpaque(texPtr).takeUnretainedValue() as! MTLTexture
+        lastEngineTexture = engineTex
+
+        // Step 3: Set up the blit pipeline once.
         if !isSetup {
-            setupBlitShader()
-            print("[SceneRenderer] Blit shader set up, program: \(blitProgram)")
+            setupBlitPipeline()
             isSetup = true
+            print("[SceneMetalView] Blit pipeline set up")
         }
 
-        // Get the engine's output texture (shared between contexts)
-        let texture = we_get_texture(ctx)
-        let gotTexture = texture != 0
-
-        frameCount += 1
-
+        // Step 4: Blit engine texture → drawable.
         let blitStart = CACurrentMediaTime()
-        if gotTexture {
-            let bounds = self.convertToBacking(self.bounds)
-            glViewport(0, 0, GLsizei(bounds.width), GLsizei(bounds.height))
-            glClear(GLbitfield(GL_COLOR_BUFFER_BIT))
-
-            glUseProgram(blitProgram)
-            glActiveTexture(GLenum(GL_TEXTURE0))
-            glBindTexture(GLenum(GL_TEXTURE_2D), texture)
-            glUniform1i(texUniform, 0)
-            glBindVertexArray(quadVAO)
-            glDrawArrays(GLenum(GL_TRIANGLE_STRIP), 0, 4)
-            glBindVertexArray(0)
-            glUseProgram(0)
+        guard let drawable = currentDrawable,
+              let rpd = currentRenderPassDescriptor,
+              let cmdBuf = commandQueue.makeCommandBuffer() else {
+            frameCount += 1
+            return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: 0)
         }
 
-        glContext.flushBuffer()
+        if let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd),
+           let pso = blitPipelineState,
+           let vb = quadVertexBuffer,
+           let ss = samplerState {
+            enc.setRenderPipelineState(pso)
+            enc.setFragmentTexture(engineTex, index: 0)
+            enc.setFragmentSamplerState(ss, index: 0)
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            enc.endEncoding()
+        }
+
+        cmdBuf.present(drawable)
+        cmdBuf.commit()
+
         let blitMs = (CACurrentMediaTime() - blitStart) * 1000.0
-
-        CGLUnlockContext(cglContext)
-        return FrameTiming(gotTexture: gotTexture, engineMs: engineMs, blitMs: blitMs)
+        frameCount += 1
+        return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: blitMs)
     }
 
-    private func setupBlitShader() {
-        // Fullscreen quad vertices: position (xy) + texcoord (uv)
-        // V is flipped (1→0 top-to-bottom) because the engine renders into an OpenGL FBO
-        // whose Y=0 is at the bottom, while the scene's coordinate system has Y increasing downward.
-        let vertices: [GLfloat] = [
-            -1, -1,  0, 1,
-             1, -1,  1, 1,
-            -1,  1,  0, 0,
-             1,  1,  1, 0,
+    func capturePNG(to outputURL: URL) throws {
+        guard let texture = lastEngineTexture else {
+            throw TextureSnapshotError.imageCreationFailed
+        }
+        try TextureSnapshot.writePNG(from: texture, using: commandQueue, to: outputURL)
+    }
+
+    // swiftlint:disable:next function_body_length
+    private func setupBlitPipeline() {
+        guard let device else { return }
+
+        // Inline MSL blit shaders.
+        // Vertex input: float4 (xy = NDC position, zw = UV).
+        // No V-flip: Metal NDC top-left origin matches WE scene coordinates.
+        let msl = """
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct VertOut {
+            float4 position [[position]];
+            float2 uv;
+        };
+
+        vertex VertOut blit_vert(uint vid [[vertex_id]],
+                                  constant float4* verts [[buffer(0)]]) {
+            VertOut out;
+            out.position = float4(verts[vid].xy, 0.0, 1.0);
+            out.uv       = verts[vid].zw;
+            return out;
+        }
+
+        fragment float4 blit_frag(VertOut in [[stage_in]],
+                                   texture2d<float> tex [[texture(0)]],
+                                   sampler samp          [[sampler(0)]]) {
+            return tex.sample(samp, in.uv);
+        }
+        """
+
+        guard let library = try? device.makeLibrary(source: msl, options: nil) else {
+            print("[SceneMetalView] Failed to compile blit library")
+            return
+        }
+
+        let psoDesc = MTLRenderPipelineDescriptor()
+        psoDesc.vertexFunction   = library.makeFunction(name: "blit_vert")
+        psoDesc.fragmentFunction = library.makeFunction(name: "blit_frag")
+        psoDesc.colorAttachments[0].pixelFormat = self.colorPixelFormat
+
+        do {
+            blitPipelineState = try device.makeRenderPipelineState(descriptor: psoDesc)
+        } catch {
+            print("[SceneMetalView] Failed to create blit PSO: \(error)")
+            return
+        }
+
+        // Fullscreen quad: NDC xy + UV zw (triangle strip, 4 vertices).
+        // UV (0,0) at top-left, (1,1) at bottom-right.
+        let verts: [Float] = [
+            -1,  1,  0, 0,   // top-left
+            -1, -1,  0, 1,   // bottom-left
+             1,  1,  1, 0,   // top-right
+             1, -1,  1, 1,   // bottom-right
         ]
+        quadVertexBuffer = device.makeBuffer(bytes: verts,
+                                             length: MemoryLayout<Float>.size * verts.count,
+                                             options: .storageModeShared)
 
-        glGenVertexArrays(1, &quadVAO)
-        glBindVertexArray(quadVAO)
-
-        glGenBuffers(1, &quadVBO)
-        glBindBuffer(GLenum(GL_ARRAY_BUFFER), quadVBO)
-        glBufferData(GLenum(GL_ARRAY_BUFFER), MemoryLayout<GLfloat>.size * vertices.count,
-                     vertices, GLenum(GL_STATIC_DRAW))
-
-        // Position attribute (location 0)
-        glEnableVertexAttribArray(0)
-        glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE),
-                              GLsizei(4 * MemoryLayout<GLfloat>.size), nil)
-        // TexCoord attribute (location 1)
-        glEnableVertexAttribArray(1)
-        glVertexAttribPointer(1, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE),
-                              GLsizei(4 * MemoryLayout<GLfloat>.size),
-                              UnsafeRawPointer(bitPattern: 2 * MemoryLayout<GLfloat>.size))
-
-        glBindVertexArray(0)
-
-        // Compile blit shader
-        let vertSrc = """
-        #version 330 core
-        layout(location = 0) in vec2 a_Position;
-        layout(location = 1) in vec2 a_TexCoord;
-        out vec2 v_TexCoord;
-        void main() {
-            gl_Position = vec4(a_Position, 0.0, 1.0);
-            v_TexCoord = a_TexCoord;
-        }
-        """
-
-        let fragSrc = """
-        #version 330 core
-        in vec2 v_TexCoord;
-        out vec4 FragColor;
-        uniform sampler2D u_Texture;
-        void main() {
-            FragColor = texture(u_Texture, v_TexCoord);
-        }
-        """
-
-        let vertShader = compileShader(type: GLenum(GL_VERTEX_SHADER), source: vertSrc)
-        let fragShader = compileShader(type: GLenum(GL_FRAGMENT_SHADER), source: fragSrc)
-
-        blitProgram = glCreateProgram()
-        glAttachShader(blitProgram, vertShader)
-        glAttachShader(blitProgram, fragShader)
-        glLinkProgram(blitProgram)
-
-        glDeleteShader(vertShader)
-        glDeleteShader(fragShader)
-
-        texUniform = glGetUniformLocation(blitProgram, "u_Texture")
-    }
-
-    private func compileShader(type: GLenum, source: String) -> GLuint {
-        let shader = glCreateShader(type)
-        source.withCString { ptr in
-            var p: UnsafePointer<GLchar>? = ptr
-            glShaderSource(shader, 1, &p, nil)
-        }
-        glCompileShader(shader)
-
-        var success: GLint = 0
-        glGetShaderiv(shader, GLenum(GL_COMPILE_STATUS), &success)
-        if success == 0 {
-            var logLength: GLint = 0
-            glGetShaderiv(shader, GLenum(GL_INFO_LOG_LENGTH), &logLength)
-            if logLength > 0 {
-                var log = [GLchar](repeating: 0, count: Int(logLength))
-                glGetShaderInfoLog(shader, logLength, nil, &log)
-                print("[SceneRenderer] Shader compile error: \(String(cString: log))")
-            }
-        }
-        return shader
-    }
-
-    deinit {
-        if blitProgram != 0 { glDeleteProgram(blitProgram) }
-        if quadVAO != 0 { glDeleteVertexArrays(1, &quadVAO) }
-        if quadVBO != 0 { glDeleteBuffers(1, &quadVBO) }
+        let sampDesc = MTLSamplerDescriptor()
+        sampDesc.minFilter    = .linear
+        sampDesc.magFilter    = .linear
+        sampDesc.sAddressMode = .clampToEdge
+        sampDesc.tAddressMode = .clampToEdge
+        samplerState = device.makeSamplerState(descriptor: sampDesc)
     }
 }

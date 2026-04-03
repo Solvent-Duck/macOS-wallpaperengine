@@ -6,12 +6,15 @@ import Darwin
 /// This is a menu bar-only app (no dock icon). The status item provides
 /// wallpaper selection and app controls. Desktop windows are created
 /// automatically on launch for each connected display.
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let windowManager = DesktopWindowManager()
     private let galleryController = GalleryWindowController()
+    private let launchOptions: LaunchOptions
     private var isPaused = false
     var initialWallpaperPath: String?
+    private var automationController: AutomationController?
 
     // Menu items that need dynamic updates
     private var currentWallpaperItem: NSMenuItem!
@@ -22,16 +25,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var propertiesController: PropertiesWindowController?
 
+    init(launchOptions: LaunchOptions) {
+        self.launchOptions = launchOptions
+        super.init()
+        windowManager.automationMode = launchOptions.isAutomation
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        setupStatusBar()
+        if !launchOptions.isAutomation {
+            setupStatusBar()
+        }
         windowManager.setupWindows()
         print("[WallpaperEngine] Ready — \(NSScreen.screens.count) display(s) detected")
 
-        // Auto-load wallpaper if a path was provided via CLI
         if let path = initialWallpaperPath {
             let url = URL(fileURLWithPath: path)
             windowManager.loadWallpaper(from: url)
-            updateMenuState()
+            if !launchOptions.isAutomation {
+                updateMenuState()
+            }
+        }
+
+        if launchOptions.isAutomation {
+            guard initialWallpaperPath != nil else {
+                print("[Automation] \(AutomationError.missingWallpaperPath.localizedDescription)")
+                terminateProcess(exitCode: 1)
+                return
+            }
+
+            automationController = AutomationController(options: launchOptions) { [weak self] exitCode in
+                self?.terminateProcess(exitCode: exitCode)
+            }
+            automationController?.start(with: windowManager)
         }
     }
 
@@ -188,10 +213,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quitApp() {
+        terminateProcess(exitCode: 0)
+    }
+
+    private func terminateProcess(exitCode: Int32) {
         // Explicitly tear down renderer/window resources before process exit.
         // The linked scene stack currently crashes during C++ global finalizers
         // (observed in glslang ShFinalize during NSApplication.terminate -> exit).
-        // After manual teardown, use _exit(0) to bypass the broken finalizer path.
+        // After manual teardown, use _exit() to bypass the broken finalizer path.
         windowManager.teardown()
         statusItem?.menu = nil
         if let statusItem {
@@ -202,7 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         fflush(stdout)
         fflush(stderr)
-        _exit(0)
+        _exit(exitCode)
     }
 
     /// If the properties panel is open, update it for the newly loaded wallpaper.

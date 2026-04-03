@@ -10,6 +10,7 @@ import AppKit
 /// Automatically pauses rendering when all desktop windows are fully
 /// occluded by other application windows, and resumes when any part
 /// of the desktop becomes visible again.
+@MainActor
 class DesktopWindowManager {
     private var windows: [DesktopWindow] = []
     private var renderer: WallpaperRenderer?
@@ -21,6 +22,7 @@ class DesktopWindowManager {
     private var isManuallyPaused = false
     private var isSleeping = false
     private var lastRebuildTime: Double = 0
+    var automationMode = false
 
     /// NSProcessInfo activity token held while the wallpaper is actively rendering.
     /// Prevents macOS App Nap from throttling timer callbacks and the render loop.
@@ -218,6 +220,22 @@ class DesktopWindowManager {
         savePropertyValues()
     }
 
+    func requestScreenshot(outputURL: URL, afterFrames: Int, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let sceneRenderer = renderer as? SceneRenderer else {
+            completion(.failure(AutomationError.unsupportedRenderer))
+            return
+        }
+        sceneRenderer.requestScreenshot(outputURL: outputURL, afterFrames: afterFrames, completion: completion)
+    }
+
+    func requestBenchmark(outputURL: URL, duration: TimeInterval, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let sceneRenderer = renderer as? SceneRenderer else {
+            completion(.failure(AutomationError.unsupportedRenderer))
+            return
+        }
+        sceneRenderer.requestBenchmark(outputURL: outputURL, duration: duration, completion: completion)
+    }
+
     // MARK: - Private
 
     private func createRenderer(for project: WallpaperProject, fileURL: URL) throws -> WallpaperRenderer {
@@ -297,10 +315,13 @@ class DesktopWindowManager {
 
     /// Whether all conditions are met to resume rendering.
     private var canResume: Bool {
-        isVisible && !isManuallyPaused && !isSleeping
+        (automationMode || isVisible) && !isManuallyPaused && !isSleeping
     }
 
     private func handleVisibilityChange(_ visible: Bool) {
+        if automationMode {
+            return
+        }
         guard visible != isVisible else { return }
         isVisible = visible
 
@@ -376,10 +397,4 @@ class DesktopWindowManager {
         rebuildWindows()
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
-        occlusionDetector.stop()
-        renderer?.stop()
-    }
 }
