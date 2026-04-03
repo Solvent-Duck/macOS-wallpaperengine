@@ -306,7 +306,11 @@ class SceneRenderer: WallpaperRenderer {
         if let request = screenshotRequest, renderedFrameCount >= request.targetFrame {
             screenshotRequest = nil
             do {
-                try mv.capturePNG(to: request.outputURL)
+                let report = try mv.capturePNG(to: request.outputURL)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let reportData = try encoder.encode(report)
+                try reportData.write(to: request.outputURL.appendingPathExtension("json"))
                 PerformanceMonitor.shared.logEvent("Screenshot captured: \(request.outputURL.path)")
                 request.completion(.success(()))
             } catch {
@@ -419,11 +423,11 @@ private class SceneMetalView: MTKView {
         return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: blitMs)
     }
 
-    func capturePNG(to outputURL: URL) throws {
+    func capturePNG(to outputURL: URL) throws -> ScreenshotReport {
         guard let texture = lastEngineTexture else {
             throw TextureSnapshotError.imageCreationFailed
         }
-        try TextureSnapshot.writePNG(from: texture, using: commandQueue, to: outputURL)
+        return try TextureSnapshot.writePNG(from: texture, using: commandQueue, to: outputURL)
     }
 
     // swiftlint:disable:next function_body_length

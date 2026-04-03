@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://macos-wallpaperengine.local/CompatibilitySuite/schema/run-report.schema.json",
+  "title": "Compatibility Suite Run Report",
+  "type": "object",
+  "required": [
+    "run_id",
+    "generated_at",
+    "fixture_reports"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "fixture_reports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fixtureReport"
+      }
+    }
+  },
+  "$defs": {
+    "fixtureReport": {
+      "type": "object",
+      "required": [
+        "fixture_id",
+        "status",
+        "launch_ok",
+        "render_ok",
+        "black_frame",
+        "errors",
+        "duration_ms"
+      ],
+      "properties": {
+        "fixture_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "partial",
+            "fail",
+            "crash"
+          ]
+        },
+        "launch_ok": {
+          "type": "boolean"
+        },
+        "render_ok": {
+          "type": "boolean"
+        },
+        "black_frame": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "duration_ms": {
+          "type": "number"
+        },
+        "benchmark": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "screenshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -40,3 +40,19 @@ Functionality and impact:
 - `WallpaperEngine <wallpaper> --screenshot <file>` now writes a PNG and exits.
 - `WallpaperEngine <wallpaper> --benchmark <file>` now writes JSON containing `cpu_avg_ms`, `cpu_p95_ms`, `fps_avg`, `memory_peak_mb`, and `sample_count`.
 - Verified locally with `deep_space`: the automation flow produced a valid `1920x1080` PNG and benchmark JSON in `/tmp/`.
+
+### Phase 1 Suite Runner
+
+Changes:
+- Added `CompatibilitySuite/run_suite.py` to launch the app per fixture, capture stdout and stderr, and write per-fixture plus summary JSON reports.
+- Added `CompatibilitySuite/schema/run-report.schema.json` for the report format.
+- Extended screenshot capture to emit a PNG sidecar JSON with black-frame classification metadata.
+
+Functionality and impact:
+- The harness now measures `launch_ok`, `render_ok`, `black_frame`, `duration_ms`, and benchmark output per fixture.
+- Full local corpus run completed with the current three fixtures.
+- Initial baseline:
+  - `neon_sunset`: `pass`
+  - `deep_space`: `fail` (`black_frame: true`)
+  - `shimmering_particles`: `fail` (`black_frame: true`)
+- This gives Phase 2+ work a concrete regression target instead of anecdotal testing.

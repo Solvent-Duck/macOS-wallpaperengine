@@ -1,7 +1,16 @@
 import CoreGraphics
+import Foundation
 import ImageIO
 import Metal
 import UniformTypeIdentifiers
+
+struct ScreenshotReport: Codable {
+    let width: Int
+    let height: Int
+    let black_frame: Bool
+    let sampled_pixels: Int
+    let black_pixels: Int
+}
 
 enum TextureSnapshotError: LocalizedError {
     case unsupportedPixelFormat(MTLPixelFormat)
@@ -30,7 +39,7 @@ enum TextureSnapshotError: LocalizedError {
 }
 
 enum TextureSnapshot {
-    static func writePNG(from texture: MTLTexture, using commandQueue: MTLCommandQueue, to url: URL) throws {
+    static func writePNG(from texture: MTLTexture, using commandQueue: MTLCommandQueue, to url: URL) throws -> ScreenshotReport {
         let width = texture.width
         let height = texture.height
         let bytesPerPixel = 4
@@ -121,5 +130,36 @@ enum TextureSnapshot {
         guard CGImageDestinationFinalize(destination) else {
             throw TextureSnapshotError.finalizeFailed
         }
+
+        return blackFrameReport(from: rgba, width: width, height: height)
+    }
+
+    private static func blackFrameReport(from rgba: UnsafePointer<UInt8>, width: Int, height: Int) -> ScreenshotReport {
+        let sampleColumns = min(max(width / 160, 1), 10)
+        let sampleRows = min(max(height / 90, 1), 10)
+        let threshold: UInt8 = 10
+
+        var sampleCount = 0
+        var blackCount = 0
+
+        for rowIndex in 0..<sampleRows {
+            let y = sampleRows == 1 ? height / 2 : rowIndex * (height - 1) / (sampleRows - 1)
+            for columnIndex in 0..<sampleColumns {
+                let x = sampleColumns == 1 ? width / 2 : columnIndex * (width - 1) / (sampleColumns - 1)
+                let pixel = rgba.advanced(by: (y * width + x) * 4)
+                sampleCount += 1
+                if pixel[0] < threshold && pixel[1] < threshold && pixel[2] < threshold {
+                    blackCount += 1
+                }
+            }
+        }
+
+        return ScreenshotReport(
+            width: width,
+            height: height,
+            black_frame: Double(blackCount) / Double(max(sampleCount, 1)) > 0.95,
+            sampled_pixels: sampleCount,
+            black_pixels: blackCount
+        )
     }
 }
