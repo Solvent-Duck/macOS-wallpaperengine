@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://macos-wallpaperengine.local/CompatibilitySuite/schema/fixture.schema.json",
+  "title": "Wallpaper Engine Compatibility Fixture Catalog",
+  "type": "object",
+  "required": [
+    "generated_at",
+    "corpus_root",
+    "fixtures"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "corpus_root": {
+      "type": "string"
+    },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fixture"
+      }
+    }
+  },
+  "$defs": {
+    "fixture": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "path",
+        "type",
+        "category",
+        "expected_features",
+        "expected_script_apis",
+        "expected_object_types",
+        "shader_includes",
+        "schema_version",
+        "known_status",
+        "notes"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preview_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "enum": [
+            "scene",
+            "video",
+            "web"
+          ]
+        },
+        "category": {
+          "enum": [
+            "minimal",
+            "popular",
+            "pathological-shader",
+            "script-heavy",
+            "text-heavy",
+            "particle-heavy",
+            "video-scene",
+            "regression"
+          ]
+        },
+        "expected_features": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "light",
+              "audio",
+              "text",
+              "particle",
+              "rtt",
+              "video-texture",
+              "script",
+              "post-processing"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "expected_script_apis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "expected_object_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "shader_includes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ]
+        },
+        "known_status": {
+          "enum": [
+            "pass",
+            "partial",
+            "fail",
+            "crash",
+            "untested"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

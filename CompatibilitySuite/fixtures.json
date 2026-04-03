@@ -1,0 +1,83 @@
+{
+  "generated_at": "2026-04-03T12:39:34.092483+00:00",
+  "corpus_root": "/Users/isaiahbergstrom/wallpaper_engine/test_wallpapers",
+  "fixtures": [
+    {
+      "id": "deep_space",
+      "name": "Deep Space",
+      "path": "deep_space",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "minimal",
+      "expected_features": [],
+      "expected_script_apis": [],
+      "expected_object_types": [
+        "image"
+      ],
+      "shader_includes": [
+        "common_fragment.h",
+        "common_vertex.h"
+      ],
+      "schema_version": null,
+      "known_status": "untested",
+      "notes": "Auto-generated from project.json and scene assets."
+    },
+    {
+      "id": "neon_sunset",
+      "name": "Neon Sunset",
+      "path": "neon_sunset",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "pathological-shader",
+      "expected_features": [
+        "particle",
+        "rtt",
+        "post-processing"
+      ],
+      "expected_script_apis": [],
+      "expected_object_types": [
+        "image",
+        "model",
+        "particle"
+      ],
+      "shader_includes": [
+        "common.h",
+        "common_blending.h",
+        "common_fragment.h",
+        "common_vertex.h"
+      ],
+      "schema_version": null,
+      "known_status": "untested",
+      "notes": "Scene declares 1 particle object(s)."
+    },
+    {
+      "id": "shimmering_particles",
+      "name": "Shimmering Particles",
+      "path": "shimmering_particles",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "script-heavy",
+      "expected_features": [
+        "particle",
+        "rtt",
+        "script",
+        "post-processing"
+      ],
+      "expected_script_apis": [
+        "applyUserProperties",
+        "thisObject"
+      ],
+      "expected_object_types": [
+        "image",
+        "particle"
+      ],
+      "shader_includes": [
+        "common_fragment.h",
+        "common_particles.h"
+      ],
+      "schema_version": 0,
+      "known_status": "untested",
+      "notes": "Detected 1 inline script block(s). Scene declares 4 particle object(s)."
+    }
+  ]
+}
