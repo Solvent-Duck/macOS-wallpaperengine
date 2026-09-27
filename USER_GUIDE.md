@@ -27,7 +27,7 @@ After launch, it runs from the **menu bar** at the top of your screen.
 ## Before you start
 
 You need:
-- A Mac running **macOS 13 or newer**
+- A Mac running **macOS 26 or newer**
 - A Steam account with **Wallpaper Engine** wallpapers available
 - Internet connection for the first setup
 - About **10–20 minutes** for first-time installation
@@ -90,12 +90,12 @@ If you see a version number, you are good.
 
 ---
 
-### Step 3: Install the libraries this app needs
+### Step 3: Install the tools this app needs
 
 Paste this into Terminal:
 
 ```bash
-brew install cmake glew glfw sdl2 lz4 ffmpeg freeglut glm
+brew install cmake ffmpeg
 ```
 
 This may take a while.
@@ -126,12 +126,12 @@ Paste:
 ```
 
 What this does (automatically, in order):
-1. Builds the C++ rendering engine — usually **2–5 minutes** the very first time
+1. Builds the vendored shader compiler libraries — usually **under a minute** the very first time
 2. Builds the Mac app itself
 3. Launches the app
 
 You only need this one command.
-On every run after the first, steps 1 and 2 are much faster because the engine is already built.
+On every run after the first, steps 1 and 2 are near-instant because everything is already built.
 
 When it opens:
 - You may **not** see a normal app window
@@ -143,7 +143,7 @@ That icon is the app.
 
 ---
 
-## Part 6 — Get your wallpapers ready
+## Part 5 — Get your wallpapers ready
 
 This app looks for wallpapers in this folder:
 
@@ -165,7 +165,7 @@ mkdir -p "$HOME/Wallpaper Projects"
 
 ---
 
-## Part 7 — Move Steam Workshop wallpapers into the right folder
+## Part 6 — Move Steam Workshop wallpapers into the right folder
 
 If you already download wallpapers through Steam, the important thing to understand is this:
 
@@ -180,7 +180,7 @@ Wallpaper Engine workshop items are typically inside:
 ~/Library/Application Support/Steam/steamapps/workshop/content/431960/
 ```
 
-- `431960` is Wallpaper Engine’s Steam app ID
+- `431960` is Wallpaper Engine's Steam app ID
 - Inside it, each wallpaper is usually in its own numbered folder
 
 ---
@@ -254,7 +254,7 @@ That may take a while if you have a lot of wallpapers.
 
 ---
 
-## Part 8 — Pick a wallpaper inside the app
+## Part 7 — Pick a wallpaper inside the app
 
 Once the app is running:
 
@@ -267,8 +267,29 @@ The gallery scans your `~/Wallpaper Projects/` folder automatically.
 
 You can also:
 - Search by wallpaper name
-- Filter by tags
+- Filter by tags (AND/OR logic)
+- Filter by type (video, web, scene)
+- Sort by title or type
 - Click a wallpaper card to set it
+
+---
+
+## Part 8 — Customising a wallpaper's properties
+
+Many wallpapers expose settings — colours, speeds, toggles, and other options.
+
+To access them:
+1. Load a wallpaper
+2. Click the **menu bar icon**
+3. Click **Wallpaper Properties…**
+
+A floating panel will open with controls specific to that wallpaper.
+Changes take effect immediately.
+Settings are saved per wallpaper — each wallpaper remembers its own values.
+
+To go back to the original settings, click **Reset to Defaults** at the bottom of the panel.
+
+Not all wallpapers have properties. If the menu item is greyed out, that wallpaper has none.
 
 ---
 
@@ -303,11 +324,40 @@ From the menu bar icon, you can use:
 
 - **Browse Wallpapers…** — open the wallpaper gallery
 - **Select Wallpaper…** — manually choose a wallpaper file or folder
-- **Pause / Resume** — stop or continue playback
+- **Wallpaper Properties…** — adjust settings for the current wallpaper
+- **Pause / Resume** — stop or continue playback; the wallpaper freezes in place when paused
 - **Mute / Unmute Audio** — turn wallpaper sound off or on
 - **Clear Wallpaper** — remove the current animated wallpaper
-- **Copy Diagnostics** — copy technical info for troubleshooting
+- **Copy Diagnostics** — copy technical info (frame timings, FPS, memory) for troubleshooting
 - **Quit WallpaperEngine** — close the app
+
+The app also pauses automatically when your desktop is fully covered by other windows, and resumes when it is visible again.
+
+---
+
+## Multi-monitor support
+
+The app supports multiple displays.
+Each connected monitor gets its own wallpaper window automatically.
+All monitors show the same wallpaper at the same time.
+
+---
+
+## Audio reactivity
+
+Some scene and web wallpapers respond to audio — they pulse, move, or change colour based on what is playing on your Mac.
+
+Choose a source in the menu bar's **Audio Response** menu:
+
+- **System Audio** (default) responds to sound playing on your Mac. Allow the macOS
+  audio recording prompt when it appears. No loopback driver is needed.
+- **Microphone / Input Device** uses the default input, including an existing
+  loopback device. This mode requires microphone permission.
+- **Off** disables audio response.
+
+The choice is saved between launches. Capture pauses with the wallpaper and stops
+when it is removed. Audio is analyzed in memory and is not recorded to a file.
+**Mute / Unmute Audio** separately controls the wallpaper's own sound output.
 
 ---
 
@@ -316,7 +366,7 @@ From the menu bar icon, you can use:
 ### Works
 - **Video wallpapers** (`.mp4`, `.mov`, `.m4v`, and some other video files)
 - **Web wallpapers** (`.html`, JS, CSS bundles)
-- **Scene wallpapers** (the app includes bridge support for these)
+- **Scene wallpapers** (rendered natively via Metal on Apple Silicon and Intel Macs)
 
 ### Does not work
 - **Application wallpapers**
@@ -332,6 +382,7 @@ If a wallpaper uses **WebM** video, the app may convert it to **MP4** the first 
 That is why `ffmpeg` was installed earlier.
 
 So if first load is a bit slower once, that is not automatically a bug.
+Converted files are cached, so the next load is fast.
 
 ---
 
@@ -362,8 +413,8 @@ brew --version
 
 ---
 
-### Problem: build says `library not found for -lwallpaperengine`
-The C++ bridge has not been compiled yet.
+### Problem: build says `library not found for -lglslang` or similar
+The vendored shader compiler libraries have not been compiled yet.
 
 Run:
 
@@ -371,18 +422,18 @@ Run:
 ./run.sh
 ```
 
-That will build the bridge automatically before building the Swift app.
+That will build them automatically before building the Swift app.
 
 ---
 
-### Problem: build says `library not found for -lglfw`
-Install missing dependencies again:
+### Problem: build says `ffmpeg: command not found` at runtime
+Install ffmpeg:
 
 ```bash
-brew install glfw glew sdl2 freeglut glm cmake lz4 ffmpeg
+brew install ffmpeg
 ```
 
-Then rebuild.
+ffmpeg is used to convert WebM video wallpapers to MP4 on first load.
 
 ---
 
@@ -436,6 +487,16 @@ Best test wallpapers:
 
 ---
 
+### Problem: audio reactivity is not working
+Check the status in **Audio Response**, and make sure the wallpaper is playing
+and supports audio response. For **System Audio**, allow WallpaperEngine under
+**System Settings → Privacy & Security → Screen & System Audio Recording**.
+For **Microphone / Input Device**, check **Privacy & Security → Microphone** and
+the selected input device. After granting permission, select the audio source
+again to retry. The app does not change your system's default audio devices.
+
+---
+
 ### Problem: you want a totally normal app you can double-click
 At the moment, this project is still closer to a **build-it-once, then use it** tool than a polished consumer app installer.
 
@@ -458,28 +519,28 @@ If you want the shortest version, do this:
 3. Install Homebrew if needed
 4. Run:
    ```bash
-   brew install cmake glew glfw sdl2 lz4 ffmpeg freeglut glm
+   brew install cmake ffmpeg
    ```
 5. Build and launch:
    ```bash
    cd /Users/isaiahbergstrom/Projects/macOS-wallpaperengine
    ./run.sh
    ```
-   This handles the bridge build, Swift build, and launch in one step.
-   The first run takes 2–5 minutes for the C++ engine. After that it's fast.
+   This handles the shader library build, Swift build, and launch in one step.
+   The first run takes under a minute. After that it's near-instant.
 6. Create wallpaper folder if needed:
    ```bash
    mkdir -p "$HOME/Wallpaper Projects"
    ```
-8. Open Steam’s workshop storage folder:
+7. Open Steam's workshop storage folder:
    ```bash
    open "$HOME/Library/Application Support/Steam/steamapps/workshop/content/431960"
    ```
-9. Copy wallpaper folders into:
+8. Copy wallpaper folders into:
    ```text
    ~/Wallpaper Projects/
    ```
-10. In the app’s menu bar icon, click **Browse Wallpapers…**
+9. In the app's menu bar icon, click **Browse Wallpapers…**
 
 ---
 

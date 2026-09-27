@@ -2,6 +2,8 @@
 
 Audit date: 2026-04-04
 
+Current work: see [Windows parity progress](WINDOWS_PARITY_PROGRESS.md) for the September 2026 audit, verified coordinate/fullscreen/particle/property/texture fixes, and remaining coverage gaps. The historical subsystem notes below are not a Windows parity sign-off.
+
 Purpose: record the current native-only runtime boundaries that are intentionally incomplete so the repo does not present partial-parity systems as finished.
 
 ## Interpretation Rules
@@ -57,15 +59,18 @@ Purpose: record the current native-only runtime boundaries that are intentionall
 
 ### Mesh / Model Geometry
 
-- Status: placeholder detection only
+- Status: partial implementation
 - Files:
+  - [`ObjectParser.cpp`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/linux-wallpaperengine/src/WallpaperEngine/Data/Parsers/ObjectParser.cpp)
   - [`NativeSceneRenderer.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/NativeSceneRenderer/NativeSceneRenderer.swift#L90)
   - [`ImageRenderer.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/NativeSceneRenderer/ImageRenderer.swift)
 - Current behavior:
-  - support analysis flags `.mdl`/`.obj` usage.
-  - native image rendering still produces quad geometry only.
+  - raw scene objects that author a top-level `"model"` are now adapted into native image/model nodes during scene export instead of remaining `unknown`.
+  - native image rendering can now load `.obj` geometry directly and resolve `.mdl` references through sibling `.obj` mesh assets.
+  - material passes now render against variable-vertex scene geometry instead of assuming every image node is a quad.
+  - support analysis only keeps `mesh-geometry` as a placeholder for still-unsupported model features such as puppet meshes.
 - Implication:
-  - model-backed scenes are currently rendered through the quad path unless future parity work replaces it.
+  - static model-backed scenes now render on the owned path, but broader mesh feature parity beyond position/UV geometry is still limited.
 
 ### Text
 
@@ -89,12 +94,15 @@ Purpose: record the current native-only runtime boundaries that are intentionall
 - Files:
   - [`PropertyEvaluator.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/NativeSceneRuntime/PropertyEvaluator.swift#L153)
   - [`ScriptHost.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/NativeSceneRuntime/ScriptHost.swift)
+  - [`SceneScriptRuntime.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/NativeSceneRuntime/SceneScriptRuntime.swift)
   - [`SCRIPT_API_INVENTORY.md`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/docs/SCRIPT_API_INVENTORY.md)
 - Current behavior:
   - the native path evaluates scripted dynamic values through the owned QuickJS host.
-  - the standard scene callback/object host surface is still not implemented.
+  - scene callback scripts now run through the owned QuickJS host for `applyUserProperties`, `init`, `destroy`, and `thisObject` mutations against camera-general and parsed node-setting state.
+  - callback-driven mutations persist as runtime overrides and feed back into normal native property evaluation rather than bypassing the owned runtime.
+  - `thisScene`, timer APIs, and richer engine/input bindings are still not implemented beyond the currently exercised `engine.runtime`, `engine.screenResolution`, and cursor-position surface.
 - Implication:
-  - dynamic-value scripts work on the owned path; full SceneScript parity does not.
+  - the current workshop/script corpus no longer depends on the old scene-callback gap, but the full broader SceneScript API surface is still not complete.
 
 ### Cursor / Parallax / Interactive Input
 
@@ -112,29 +120,16 @@ Purpose: record the current native-only runtime boundaries that are intentionall
 
 ## Scene Loading / Dependencies
 
-### Scene Export Helper
+### Scene Loading
 
-- Status: structural debt
-- Files:
-  - [`SceneDescriptionAdapter.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/NativeSceneBridge/SceneDescriptionAdapter.swift)
-  - [`SceneDescriptionExportTool/main.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/SceneDescriptionExportTool/main.swift)
-  - [`Package.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Package.swift#L149)
-- Current behavior:
-  - the app runtime is native-only.
-  - scene descriptions are now exported directly through `CWEBridge` from `NativeSceneBridge` instead of spawning the helper executable.
-  - parser ownership is still upstream/C++ and still linked into the process.
-- Implication:
-  - the helper-process boundary is gone, but load-time parser ownership has not yet moved native.
+- Status: **complete**
+- Scene descriptions are loaded by the owned Swift parser in `NativeSceneCore`, including package-backed workshop scenes via `scene.pkg` / `gifscene.pkg` extraction.
+- The legacy `CWEBridge` and `SceneDescriptionExportTool` have been removed.
 
 ### App Shutdown
 
-- Status: structural debt
-- Files:
-  - [`AppDelegate.swift`](/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/Sources/WallpaperEngine/AppDelegate.swift#L221)
-- Current behavior:
-  - app shutdown uses `_exit()` after manual teardown to avoid a C++ finalizer crash.
-- Implication:
-  - teardown is operationally stable for automation, but the finalizer path is not clean yet.
+- Status: **complete**
+- glslang is finalized explicitly via `MetalShaderCompiler.finalizeCompiler()` before exit. Normal `exit()` is used; no C++ destructor crashes.
 
 ## Compatibility Harness
 

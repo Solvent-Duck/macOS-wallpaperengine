@@ -1,6 +1,6 @@
 # macOS Wallpaper Engine
 
-A macOS application that plays animated [Wallpaper Engine](https://store.steampowered.com/app/431960/Wallpaper_Engine/) wallpapers as your desktop background. Supports video and web wallpaper types with a menu bar interface and visual gallery browser.
+A macOS application that plays animated [Wallpaper Engine](https://store.steampowered.com/app/431960/Wallpaper_Engine/) wallpapers as your desktop background. Supports video, web, and native Metal scene rendering with a menu bar interface and visual gallery browser. Windows rendering and feature parity are in progress; see the [parity progress report](docs/WINDOWS_PARITY_PROGRESS.md) for verified results and remaining gaps. Application wallpapers are excluded.
 
 ## Features
 
@@ -14,13 +14,17 @@ A macOS application that plays animated [Wallpaper Engine](https://store.steampo
 
 ## Requirements
 
-- macOS 13.0 or later
+- macOS 26.0 or later
 - Xcode Command Line Tools (`xcode-select --install`)
-- Swift 5.9+
+- Swift 6.2+
 - CMake 3.12+ (`brew install cmake`)
 - Homebrew dependencies (see below)
 
 ## Building
+
+For development checks, fixture paths, and evidence retention, start with the
+[development procedure](docs/DEVELOPMENT_PROCEDURE.md). The [documentation index](docs/README.md)
+separates current guidance from historical implementation reports.
 
 ### 1. Install dependencies
 
@@ -29,7 +33,7 @@ A macOS application that plays animated [Wallpaper Engine](https://store.steampo
 xcode-select --install
 
 # CMake and runtime dependencies
-brew install cmake glew glfw sdl2 lz4 ffmpeg freeglut glm
+brew install cmake ffmpeg
 ```
 
 ### 2. Build and run
@@ -39,18 +43,18 @@ brew install cmake glew glfw sdl2 lz4 ffmpeg freeglut glm
 ```
 
 `run.sh` handles everything in order:
-1. Builds the C++ engine bridge (`./build-bridge.sh`) — only on first run or if the library is missing; takes 2–5 minutes
+1. Checks and incrementally builds the vendored shader compiler and script libraries (`./build-bridge.sh`), including changed configuration and patches
 2. Compiles the Swift app (`swift build -c release`)
 3. Launches the binary
 
-On subsequent runs the bridge step is skipped, so startup is fast.
+The app uses the owned Swift scene runtime. The vendored libraries provide glslang, SPIRV-Cross, and QuickJS; there is no upstream rendering bridge in the app. Build configuration lives in `cmake/dependencies`; the QuickJS patch is applied to a generated copy under `build/`, leaving the dependency checkout clean.
 
 #### Manual build steps (if needed)
 
 If you want to build without launching, or need a clean rebuild:
 
 ```bash
-# Step 1 — C++ bridge (once, or when engine code changes)
+# Step 1 — vendored dependencies (once, or when their source changes)
 ./build-bridge.sh
 
 # Step 2 — Swift app
@@ -63,10 +67,9 @@ The release executable is at `.build/release/WallpaperEngine`.
 
 | Problem | Fix |
 |---------|-----|
-| `library not found for -lglfw` | `brew install glfw` and make sure `/opt/homebrew/lib` is on the linker path (it is by default in Package.swift) |
-| `library not found for -lwallpaperengine` | Run `./run.sh` (or `./build-bridge.sh` manually) — the C++ bridge must be compiled before `swift build` |
+| `cmake: command not found` | `brew install cmake` and put Homebrew's `bin` directory on `PATH` |
+| Missing `glslang`, `spirv-cross`, or `qjs` library | Run `./build-bridge.sh` before `swift build` |
 | `submodule update --init` hangs | Check network; the engine has ~9 nested submodules to clone |
-| CMake can't find OpenGL/GLEW/SDL2 | `brew install glew sdl2 freeglut` — CMake searches `/opt/homebrew` and `/usr/local` |
 | Linker warnings about "newer macOS version" | Safe to ignore — vendored libraries built for a newer deployment target than the Swift package minimum |
 
 ### Clean rebuild
@@ -94,7 +97,7 @@ rm -rf build .build
 
 The app runs as a menu bar accessory (no Dock icon) — look for the photo icon in the menu bar.
 
-**Quit behavior:** this is a menu bar accessory app, so quit handling is routed through the status-item menu instead of a system-wide keyboard monitor. The current quit path performs explicit renderer teardown and then exits immediately, working around a crash in linked C++ scene-renderer finalizers during normal `NSApplication.terminate()` shutdown.
+**Quit behavior:** quit handling is routed through the status-item menu. The app tears down renderers and explicitly finalizes glslang before exiting.
 
 ### Menu Bar
 
@@ -145,7 +148,7 @@ You can also load `.pkg` files (Wallpaper Engine's packed format) directly via *
 |------|--------|---------|
 | Video | Working | MP4, MOV, M4V |
 | Web | Working | HTML/JS/CSS bundles |
-| Scene | Working | Proprietary format via linux-wallpaperengine C++ bridge (OpenGL 3.3) |
+| Scene | Partial parity | Proprietary format via the native Swift/Metal scene runtime |
 | Application | Not supported | Windows executables — not feasible on macOS |
 
 **Note:** WebM videos are automatically transcoded to MP4 via ffmpeg on first load (requires ffmpeg from Homebrew).
@@ -178,7 +181,7 @@ The app creates borderless, transparent `NSWindow` instances positioned at the d
 - **`DesktopWindowManager`** — creates/destroys windows per display, manages renderer lifecycle
 - **`VideoRenderer`** — AVFoundation-based video playback with seamless looping
 - **`WebRenderer`** — WKWebView with injected JavaScript API polyfill
-- **`SceneRenderer`** — OpenGL 3.3 renderer using linux-wallpaperengine via C bridge, CVDisplayLink-driven at 30fps
+- **`SceneRenderer`** — native Swift scene runtime and Metal renderer at 30fps
 - **`OcclusionDetector`** — pauses rendering when the desktop is fully covered
 - **`CursorTracker`** — global mouse event monitor for interactive/parallax wallpapers
 - **`PerformanceMonitor`** — frame timing ring buffer and lifecycle event logger
@@ -187,4 +190,4 @@ The app creates borderless, transparent `NSWindow` instances positioned at the d
 
 ## License
 
-This project uses [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) as a submodule for future scene wallpaper support.
+This project currently vendors compatibility/runtime code from [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine), but the long-term direction is a standalone macOS-native scene runtime.
