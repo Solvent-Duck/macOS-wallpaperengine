@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import NativeSceneCompatibility
 
 /// Application delegate managing the menu bar item and desktop window lifecycle.
 ///
@@ -20,10 +21,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentWallpaperItem: NSMenuItem!
     private var pauseResumeItem: NSMenuItem!
     private var audioToggleItem: NSMenuItem!
+    private var audioResponseMenu: NSMenu!
+    private var audioResponseStatusItem: NSMenuItem!
     private var clearItem: NSMenuItem!
     private var propertiesItem: NSMenuItem!
+    private var mediaMenu: NSMenu!
+    private var mediaStatusItem: NSMenuItem!
 
     private var propertiesController: PropertiesWindowController?
+    private var didTearDownWindowManager = false
+    private var didInitiateProcessTermination = false
 
     init(launchOptions: LaunchOptions) {
         self.launchOptions = launchOptions
@@ -61,10 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Explicitly stop the CVDisplayLink and destroy the C++ engine context
-        // before exit(0) is called. Without this, SDL2's atexit handler fires
-        // while the main thread is in exit(), deadlocking the process.
-        windowManager.teardown()
+        performShutdownTeardownIfNeeded()
     }
 
     private func setupStatusBar() {
@@ -109,6 +113,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         audioToggleItem.target = self
         menu.addItem(audioToggleItem)
 
+        let responseItem = NSMenuItem(title: "Audio Response", action: nil, keyEquivalent: "")
+        audioResponseMenu = NSMenu(title: "Audio Response")
+        audioResponseStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        audioResponseStatusItem.isEnabled = false
+        audioResponseMenu.addItem(audioResponseStatusItem)
+        audioResponseMenu.addItem(.separator())
+        for source in AudioResponseSource.allCases {
+            let item = NSMenuItem(title: source.title, action: #selector(selectAudioResponse(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = source.rawValue
+            audioResponseMenu.addItem(item)
+        }
+        responseItem.submenu = audioResponseMenu
+        menu.addItem(responseItem)
+
+        let mediaItem = NSMenuItem(title: "Media Integration", action: nil, keyEquivalent: "")
+        mediaMenu = NSMenu(title: "Media Integration")
+        mediaStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        mediaStatusItem.isEnabled = false
+        mediaMenu.addItem(mediaStatusItem)
+        mediaMenu.addItem(.separator())
+        for source in MediaSourceSelection.allCases {
+            let item = NSMenuItem(title: source.title, action: #selector(selectMediaSource(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = source.rawValue
+            mediaMenu.addItem(item)
+        }
+        mediaMenu.addItem(.separator())
+        for player in MediaPlayer.allCases {
+            let item = NSMenuItem(title: "Connect \(player.name)…", action: #selector(connectMediaPlayer(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = player.rawValue
+            mediaMenu.addItem(item)
+        }
+        mediaItem.submenu = mediaMenu
+        menu.addItem(mediaItem)
+
         clearItem = NSMenuItem(title: "Clear Wallpaper", action: #selector(clearWallpaper), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
@@ -134,8 +175,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pauseResumeItem.isEnabled = hasWallpaper
         audioToggleItem.title = windowManager.isMuted ? "Unmute Audio" : "Mute Audio"
         audioToggleItem.isEnabled = hasWallpaper && windowManager.supportsAudio
+        audioResponseStatusItem.title = windowManager.audioReactivity.status
+        for item in audioResponseMenu.items where item.action == #selector(selectAudioResponse(_:)) {
+            item.state = (item.representedObject as? String) == windowManager.audioReactivity.selection.rawValue ? .on : .off
+        }
         clearItem.isEnabled = hasWallpaper
-        propertiesItem.isEnabled = hasWallpaper && !windowManager.currentProperties.isEmpty
+        propertiesItem.isEnabled = hasWallpaper
+        mediaStatusItem.title = windowManager.mediaIntegration.status
+        for item in mediaMenu.items where item.action == #selector(selectMediaSource(_:)) {
+            item.state = (item.representedObject as? String) == windowManager.mediaIntegration.selection.rawValue ? .on : .off
+        }
     }
 
     // MARK: - Actions
@@ -143,7 +192,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openProperties() {
         let props = windowManager.currentProperties
         let vals  = windowManager.currentPropertyValues
-        guard !props.isEmpty, let title = windowManager.currentTitle else { return }
+        guard let title = windowManager.currentTitle else { return }
         if propertiesController == nil { propertiesController = PropertiesWindowController() }
         propertiesController?.show(
             title: title,
@@ -151,6 +200,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             values: vals,
             onChange: { [weak self] key, value in
                 self?.windowManager.applyProperty(key: key, value: value)
+            },
+            onReset: { [weak self] in
+                self?.windowManager.resetProperties() ?? false
             }
         )
     }
@@ -198,6 +250,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuState()
     }
 
+    @objc private func selectAudioResponse(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let source = AudioResponseSource(rawValue: value) else { return }
+        windowManager.audioReactivity.select(source)
+        updateMenuState()
+    }
+
+    @objc private func selectMediaSource(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let source = MediaSourceSelection(rawValue: value) else { return }
+        windowManager.mediaIntegration.select(source)
+        updateMenuState()
+    }
+
+    @objc private func connectMediaPlayer(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let player = MediaPlayer(rawValue: value) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            await windowManager.mediaIntegration.connect(player)
+            updateMenuState()
+        }
+    }
+
     @objc private func copyDiagnostics() {
         let summary = PerformanceMonitor.shared.summary()
         NSPasteboard.general.clearContents()
@@ -217,11 +290,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func terminateProcess(exitCode: Int32) {
-        // Explicitly tear down renderer/window resources before process exit.
-        // The linked scene stack currently crashes during C++ global finalizers
-        // (observed in glslang ShFinalize during NSApplication.terminate -> exit).
-        // After manual teardown, use _exit() to bypass the broken finalizer path.
-        windowManager.teardown()
+        guard !didInitiateProcessTermination else { return }
+        didInitiateProcessTermination = true
+
+        performShutdownTeardownIfNeeded()
         statusItem?.menu = nil
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
@@ -231,25 +303,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         fflush(stdout)
         fflush(stderr)
-        _exit(exitCode)
+        exit(exitCode)
+    }
+
+    private func performShutdownTeardownIfNeeded() {
+        guard !didTearDownWindowManager else { return }
+        didTearDownWindowManager = true
+        windowManager.teardown()
+        MetalShaderCompiler.finalizeCompiler()
     }
 
     /// If the properties panel is open, update it for the newly loaded wallpaper.
-    /// If the new wallpaper has no properties, close the panel.
+    /// Keep Reset available for scene storage even without authored properties.
     private func refreshPropertiesWindowIfNeeded() {
         guard let controller = propertiesController else { return }
         let props = windowManager.currentProperties
-        if props.isEmpty {
-            controller.close()
-        } else if let title = windowManager.currentTitle {
+        if let title = windowManager.currentTitle {
             controller.show(
                 title: title,
                 properties: props,
                 values: windowManager.currentPropertyValues,
                 onChange: { [weak self] key, value in
                     self?.windowManager.applyProperty(key: key, value: value)
+                },
+                onReset: { [weak self] in
+                    self?.windowManager.resetProperties() ?? false
                 }
             )
+        } else {
+            controller.close()
         }
     }
 }

@@ -402,6 +402,24 @@ public struct RuntimeClock: Codable, Equatable, Sendable {
 public struct RuntimeCursorState: Codable, Equatable, Sendable {
     public let normalized: RuntimeVector2
     public let parallaxDisplacement: RuntimeVector2
+    public let previousNormalized: RuntimeVector2
+    public let leftDown: Bool
+
+    public init(normalized: RuntimeVector2, parallaxDisplacement: RuntimeVector2,
+                previousNormalized: RuntimeVector2? = nil, leftDown: Bool = false) {
+        self.normalized = normalized
+        self.parallaxDisplacement = parallaxDisplacement
+        self.previousNormalized = previousNormalized ?? normalized
+        self.leftDown = leftDown
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        normalized = try values.decode(RuntimeVector2.self, forKey: .normalized)
+        parallaxDisplacement = try values.decode(RuntimeVector2.self, forKey: .parallaxDisplacement)
+        previousNormalized = try values.decodeIfPresent(RuntimeVector2.self, forKey: .previousNormalized) ?? normalized
+        leftDown = try values.decodeIfPresent(Bool.self, forKey: .leftDown) ?? false
+    }
 
     public var estimatedByteSize: Int {
         MemoryLayout<Self>.stride
@@ -417,6 +435,10 @@ public struct AnimationLayerFrame: Codable, Equatable, Sendable {
     public let rate: Double
     public let blend: Double
     public let visible: Bool
+
+    /// Explicit clip frame after per-layer playback, seeking and rate changes.
+    /// Older frame packets omit it and retain elapsed-time sampling.
+    public var sampleFrame: Double? = nil
 
     public var estimatedByteSize: Int { MemoryLayout<Self>.stride }
 }
@@ -435,6 +457,12 @@ public struct FrameNode: Codable, Equatable, Sendable {
     public let renderItemReferences: [String]
     public let imageEffects: [FrameImageEffect]
     public let animationLayers: [AnimationLayerFrame]
+    public let color: RuntimeVector3?
+    public let textureAnimationTime: Double?
+    /// Script-controlled albedo movie time. Nil preserves shared playback for
+    /// uncontrolled layers and frame packets created by older versions.
+    public let videoTextureTime: Double?
+    public let imageAlignment: String?
 
     public init(
         nodeID: NodeID,
@@ -449,7 +477,11 @@ public struct FrameNode: Codable, Equatable, Sendable {
         opacity: Double?,
         renderItemReferences: [String],
         imageEffects: [FrameImageEffect],
-        animationLayers: [AnimationLayerFrame]
+        animationLayers: [AnimationLayerFrame],
+        color: RuntimeVector3? = nil,
+        textureAnimationTime: Double? = nil,
+        videoTextureTime: Double? = nil,
+        imageAlignment: String? = nil
     ) {
         self.nodeID = nodeID
         self.name = name
@@ -464,11 +496,16 @@ public struct FrameNode: Codable, Equatable, Sendable {
         self.renderItemReferences = renderItemReferences
         self.imageEffects = imageEffects
         self.animationLayers = animationLayers
+        self.color = color
+        self.textureAnimationTime = textureAnimationTime
+        self.videoTextureTime = videoTextureTime
+        self.imageAlignment = imageAlignment
     }
 
     public var estimatedByteSize: Int {
         MemoryLayout<Self>.stride
         + name.utf8.count
+        + (imageAlignment?.utf8.count ?? 0)
         + dependencyIDs.count * MemoryLayout<NodeID>.stride
         + localTransform.estimatedByteSize
         + worldTransform.estimatedByteSize
@@ -482,8 +519,11 @@ public struct FrameNode: Codable, Equatable, Sendable {
 public struct FrameTextureBinding: Codable, Equatable, Sendable {
     public let slot: Int
     public let path: String
+    public var sourceType: String? = nil
+    /// Authored placeholder used while a system texture is unavailable.
+    public var fallbackPath: String? = nil
 
-    public var estimatedByteSize: Int { MemoryLayout<Self>.stride + path.utf8.count }
+    public var estimatedByteSize: Int { MemoryLayout<Self>.stride + path.utf8.count + (sourceType?.utf8.count ?? 0) + (fallbackPath?.utf8.count ?? 0) }
 }
 
 public struct FrameMaterialPass: Codable, Equatable, Sendable {
@@ -566,15 +606,27 @@ public struct FrameRenderTargetDescriptor: Codable, Equatable, Sendable {
     public let name: String
     public let scale: Double
     public let unique: Bool
+    public let format: String
 
-    public init(name: String, scale: Double, unique: Bool) {
+    public init(name: String, scale: Double, unique: Bool, format: String = "rgba8888") {
         self.name = name
         self.scale = scale
         self.unique = unique
+        self.format = format
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, scale, unique, format }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = try values.decode(String.self, forKey: .name)
+        scale = try values.decode(Double.self, forKey: .scale)
+        unique = try values.decode(Bool.self, forKey: .unique)
+        format = try values.decodeIfPresent(String.self, forKey: .format) ?? "rgba8888"
     }
 
     public var estimatedByteSize: Int {
-        MemoryLayout<Self>.stride + name.utf8.count
+        MemoryLayout<Self>.stride + name.utf8.count + format.utf8.count
     }
 }
 
@@ -610,11 +662,14 @@ public struct FrameEffectPass: Codable, Equatable, Sendable {
 
 public struct FrameImageEffect: Codable, Equatable, Sendable {
     public let id: Int
+    /// Authored array position, stable when earlier effects are hidden. IDs may repeat.
+    public let sourceIndex: Int?
     public let renderTargets: [FrameRenderTargetDescriptor]
     public let passes: [FrameEffectPass]
 
-    public init(id: Int, renderTargets: [FrameRenderTargetDescriptor], passes: [FrameEffectPass]) {
+    public init(id: Int, sourceIndex: Int? = nil, renderTargets: [FrameRenderTargetDescriptor], passes: [FrameEffectPass]) {
         self.id = id
+        self.sourceIndex = sourceIndex
         self.renderTargets = renderTargets
         self.passes = passes
     }
@@ -653,12 +708,18 @@ public struct FrameLight: Codable, Equatable, Sendable {
     public let innerCone: Double
     public let outerCone: Double
     public let castsShadow: Bool
+    /// Authored tube endpoint transformed into world coordinates; nil for
+    /// older descriptors that only carry a centered length.
+    public let endPosition: RuntimeVector3?
+    /// Nil in older packets; modern radial lighting defaults to exponent two.
+    public var exponent: Double? = nil
 
     public var estimatedByteSize: Int {
         MemoryLayout<Self>.stride
         + position.estimatedByteSize
         + angles.estimatedByteSize
         + color.estimatedByteSize
+        + (endPosition?.estimatedByteSize ?? 0)
     }
 }
 
@@ -673,12 +734,83 @@ public struct FrameParticleSystem: Codable, Equatable, Sendable {
     public let sequenceMultiplier: Double
     public let startTime: UInt32
     public let instances: [FrameParticleInstance]
+    /// Trail/rope renderer configuration (nil for plain sprite renderers).
+    public let rendererParameters: FrameParticleRendererParameters?
+    /// Simulated child systems (eventfollow/eventspawn/eventdeath/static),
+    /// rendered in the parent node's transform space.
+    public let childSystems: [FrameParticleSystem]
+    public let animationMode: String
+
+    public init(
+        nodeID: NodeID,
+        visible: Bool,
+        materialReference: String?,
+        rendererName: String,
+        maxParticleCount: UInt32,
+        liveParticleEstimate: UInt32,
+        emissionEnabled: Bool,
+        sequenceMultiplier: Double,
+        startTime: UInt32,
+        instances: [FrameParticleInstance],
+        rendererParameters: FrameParticleRendererParameters? = nil,
+        childSystems: [FrameParticleSystem] = [],
+        animationMode: String = "sequence"
+    ) {
+        self.nodeID = nodeID
+        self.visible = visible
+        self.materialReference = materialReference
+        self.rendererName = rendererName
+        self.maxParticleCount = maxParticleCount
+        self.liveParticleEstimate = liveParticleEstimate
+        self.emissionEnabled = emissionEnabled
+        self.sequenceMultiplier = sequenceMultiplier
+        self.startTime = startTime
+        self.instances = instances
+        self.rendererParameters = rendererParameters
+        self.childSystems = childSystems
+        self.animationMode = animationMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        nodeID = try container.decode(NodeID.self, forKey: .nodeID)
+        visible = try container.decode(Bool.self, forKey: .visible)
+        materialReference = try container.decodeIfPresent(String.self, forKey: .materialReference)
+        rendererName = try container.decode(String.self, forKey: .rendererName)
+        maxParticleCount = try container.decode(UInt32.self, forKey: .maxParticleCount)
+        liveParticleEstimate = try container.decode(UInt32.self, forKey: .liveParticleEstimate)
+        emissionEnabled = try container.decode(Bool.self, forKey: .emissionEnabled)
+        sequenceMultiplier = try container.decode(Double.self, forKey: .sequenceMultiplier)
+        startTime = try container.decode(UInt32.self, forKey: .startTime)
+        instances = try container.decodeIfPresent([FrameParticleInstance].self, forKey: .instances) ?? []
+        rendererParameters = try container.decodeIfPresent(
+            FrameParticleRendererParameters.self,
+            forKey: .rendererParameters
+        )
+        childSystems = try container.decodeIfPresent([FrameParticleSystem].self, forKey: .childSystems) ?? []
+        animationMode = try container.decodeIfPresent(String.self, forKey: .animationMode) ?? "sequence"
+    }
 
     public var estimatedByteSize: Int {
         MemoryLayout<Self>.stride
         + rendererName.utf8.count
         + (materialReference?.utf8.count ?? 0)
         + instances.reduce(0) { $0 + $1.estimatedByteSize }
+        + childSystems.reduce(0) { $0 + $1.estimatedByteSize }
+    }
+}
+
+public struct FrameParticleRendererParameters: Codable, Equatable, Sendable {
+    public let length: Double
+    public let maxLength: Double
+    public let minLength: Double
+    public let subdivision: Double
+
+    public init(length: Double, maxLength: Double, minLength: Double, subdivision: Double) {
+        self.length = length
+        self.maxLength = maxLength
+        self.minLength = minLength
+        self.subdivision = subdivision
     }
 }
 
@@ -689,6 +821,7 @@ public struct FrameParticleInstance: Codable, Equatable, Sendable {
     public let color: RuntimeVector4
     public let velocity: RuntimeVector3
     public let lifetimePosition: Float
+    public let animationRandom: Float?
 
     public var estimatedByteSize: Int {
         MemoryLayout<Self>.stride
@@ -705,7 +838,7 @@ public struct FrameText: Codable, Equatable, Sendable {
     public let content: String
     public let fontPath: String
     public let pointSize: Double
-    public let size: RuntimeVector2
+    public internal(set) var size: RuntimeVector2
     public let maxWidth: Double
     public let maxRows: Int
     public let padding: Int
@@ -730,17 +863,41 @@ public struct FrameText: Codable, Equatable, Sendable {
     }
 }
 
+public enum FrameSoundTransportState: String, Codable, Equatable, Sendable {
+    case playing, paused, stopped, failed
+}
+
+public struct FrameSoundTransport: Codable, Equatable, Sendable {
+    public let nodeID: NodeID
+    public let state: FrameSoundTransportState
+    public let runID: UInt64
+    /// Absolute resolved sound-layer gain; the app multiplies master gain once.
+    public let gain: Float
+
+    public init(nodeID: NodeID, state: FrameSoundTransportState, runID: UInt64, gain: Float) {
+        self.nodeID = nodeID
+        self.state = state
+        self.runID = runID
+        self.gain = gain
+    }
+}
+
 public struct FramePacket: Codable, Equatable, Sendable {
     public let metadata: SceneMetadata
     public let timing: RuntimeClock
     public let cursor: RuntimeCursorState?
     public let cameraBloom: FrameCameraBloom?
+    /// Evaluated 2D camera magnification. It does not alter layer world coordinates.
+    public let cameraZoom: Float
     public let properties: [String: FrameValue]
     public let nodes: [FrameNode]
     public let materials: [FrameMaterial]
     public let lights: [FrameLight]
     public let particleSystems: [FrameParticleSystem]
     public let texts: [FrameText]
+    public let soundTransports: [FrameSoundTransport]
+    /// Frequency analysis of the host audio input for audio-reactive shaders.
+    public let audio: AudioInputState?
 
     public init(
         metadata: SceneMetadata,
@@ -752,18 +909,41 @@ public struct FramePacket: Codable, Equatable, Sendable {
         materials: [FrameMaterial],
         lights: [FrameLight],
         particleSystems: [FrameParticleSystem],
-        texts: [FrameText]
+        texts: [FrameText],
+        soundTransports: [FrameSoundTransport] = [],
+        audio: AudioInputState? = nil,
+        cameraZoom: Float = 1
     ) {
         self.metadata = metadata
         self.timing = timing
         self.cursor = cursor
         self.cameraBloom = cameraBloom
+        self.cameraZoom = Self.validCameraZoom(cameraZoom)
         self.properties = properties
         self.nodes = nodes
         self.materials = materials
         self.lights = lights
         self.particleSystems = particleSystems
         self.texts = texts
+        self.soundTransports = soundTransports
+        self.audio = audio
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        metadata = try container.decode(SceneMetadata.self, forKey: .metadata)
+        timing = try container.decode(RuntimeClock.self, forKey: .timing)
+        cursor = try container.decodeIfPresent(RuntimeCursorState.self, forKey: .cursor)
+        cameraBloom = try container.decodeIfPresent(FrameCameraBloom.self, forKey: .cameraBloom)
+        cameraZoom = Self.validCameraZoom(try container.decodeIfPresent(Float.self, forKey: .cameraZoom) ?? 1)
+        properties = try container.decode([String: FrameValue].self, forKey: .properties)
+        nodes = try container.decode([FrameNode].self, forKey: .nodes)
+        materials = try container.decode([FrameMaterial].self, forKey: .materials)
+        lights = try container.decode([FrameLight].self, forKey: .lights)
+        particleSystems = try container.decode([FrameParticleSystem].self, forKey: .particleSystems)
+        texts = try container.decode([FrameText].self, forKey: .texts)
+        soundTransports = try container.decodeIfPresent([FrameSoundTransport].self, forKey: .soundTransports) ?? []
+        audio = try container.decodeIfPresent(AudioInputState.self, forKey: .audio)
     }
 
     public var estimatedByteSize: Int {
@@ -776,6 +956,11 @@ public struct FramePacket: Codable, Equatable, Sendable {
         + lights.reduce(0) { $0 + $1.estimatedByteSize }
         + particleSystems.reduce(0) { $0 + $1.estimatedByteSize }
         + texts.reduce(0) { $0 + $1.estimatedByteSize }
+        + soundTransports.count * MemoryLayout<FrameSoundTransport>.stride
+    }
+
+    private static func validCameraZoom(_ value: Float) -> Float {
+        value.isFinite && value > 0 ? value : 1
     }
 
     public func encodedByteSize() throws -> Int {

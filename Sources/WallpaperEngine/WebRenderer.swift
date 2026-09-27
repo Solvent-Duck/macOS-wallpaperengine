@@ -6,21 +6,29 @@ import WebKit
 /// Wallpaper Engine web wallpapers are HTML bundles loaded from a local
 /// directory. They communicate with the host via a JavaScript API provided
 /// by WE. This renderer injects a compatibility polyfill at document-start
-/// that stubs the WE JS API to ~80% coverage, then applies user-configurable
-/// property values once the page finishes loading.
+/// for supported WE callbacks, then applies user-configurable property values
+/// once each wallpaper document finishes loading.
+@MainActor
 class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     let view: NSView
     private let webView: WKWebView
     private let fileURL: URL
+    private let readAccessURL: URL
     private var isLoaded = false
+    private var isPlaying = false
+    private var activeNavigation: WKNavigation?
+    private var teardownNavigation: WKNavigation?
+    private var acceptsNavigation = false
+    private var isMediaSuspended = false
 
     /// Property definitions from project.json, set before play().
     private var wallpaperProperties: [WallpaperProperty] = []
     /// Current property values (defaults merged with user overrides).
     private var propertyValues: [String: String] = [:]
 
-    init(fileURL: URL) {
+    init(fileURL: URL, readAccessURL: URL? = nil) {
         self.fileURL = fileURL
+        self.readAccessURL = readAccessURL ?? fileURL.deletingLastPathComponent()
 
         let config = WKWebViewConfiguration()
         config.suppressesIncrementalRendering = true
@@ -44,25 +52,40 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     }
 
     func play() {
+        acceptsNavigation = true
+        isPlaying = true
+        setMediaSuspended(false)
         if isLoaded {
             webView.evaluateJavaScript(Self.resumeScript, completionHandler: nil)
             print("[WebRenderer] Resumed")
-        } else {
-            let directory = fileURL.deletingLastPathComponent()
-            webView.loadFileURL(fileURL, allowingReadAccessTo: directory)
+        } else if activeNavigation == nil {
+            activeNavigation = webView.loadFileURL(fileURL, allowingReadAccessTo: readAccessURL)
             print("[WebRenderer] Loading \(fileURL.lastPathComponent)")
         }
     }
 
     func pause() {
-        webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil)
+        isPlaying = false
+        setMediaSuspended(true)
+        if isLoaded { webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil) }
         print("[WebRenderer] Paused")
     }
 
     func stop() {
+        acceptsNavigation = false
+        isPlaying = false
+        setMediaSuspended(true)
         isLoaded = false
-        webView.loadHTMLString("", baseURL: nil)
+        activeNavigation = nil
+        webView.stopLoading()
+        teardownNavigation = webView.loadHTMLString("", baseURL: nil)
         print("[WebRenderer] Stopped")
+    }
+
+    private func setMediaSuspended(_ suspended: Bool) {
+        guard suspended != isMediaSuspended else { return }
+        isMediaSuspended = suspended
+        webView.setAllMediaPlaybackSuspended(suspended, completionHandler: nil)
     }
 
     func updateCursorPosition(_ position: NSPoint) {
@@ -109,36 +132,49 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
 
     // MARK: - WKNavigationDelegate
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard acceptsNavigation, let navigation, navigation !== teardownNavigation else { return }
+        // Page scripts, reloads, and history can start a new document without
+        // going through play(). Track it so properties and pause state follow.
+        activeNavigation = navigation
+        isLoaded = false
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if !acceptsNavigation, let navigation, navigation === teardownNavigation {
+            // Document-start scripts also run on the blank teardown page.
+            // Suspend their heartbeat instead of leaving a stopped renderer ticking.
+            webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil)
+            return
+        }
+        guard let navigation, navigation === activeNavigation else { return }
         isLoaded = true
         print("[WebRenderer] Page loaded successfully")
         injectGeneralProperties()
         injectAllProperties()
+        if !isPlaying { webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil) }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard let navigation, navigation === activeNavigation else { return }
+        activeNavigation = nil
+        isLoaded = false
         print("[WebRenderer] Navigation failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        self.webView(webView, didFail: navigation, withError: error)
     }
 
     // MARK: - Private JS Injection
 
     /// Push all current property values to `wallpaperPropertyListener.applyUserProperties`.
     private func injectAllProperties() {
-        let editable = wallpaperProperties.filter { $0.type != .text }
-        guard !editable.isEmpty else { return }
-
-        let pairs = editable.map { prop -> String in
-            let val = propertyValues[prop.key] ?? prop.defaultValue
-            let key = prop.key
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            return "\"\(key)\":{value:\(prop.jsLiteral(from: val))}"
-        }.joined(separator: ",")
-
+        let payload = WallpaperProperty.javaScriptPayload(properties: wallpaperProperties, values: propertyValues)
         let js = """
         (function(){
             var l=window.wallpaperPropertyListener;
-            if(l&&l.applyUserProperties){l.applyUserProperties({\(pairs)});}
+            if(l&&l.applyUserProperties){l.applyUserProperties(\(payload));}
         })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
@@ -146,13 +182,11 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
 
     /// Push a single changed property.
     private func injectSingleProperty(_ property: WallpaperProperty, value: String) {
-        let key = property.key
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        let payload = WallpaperProperty.javaScriptPayload(properties: [property], values: [property.key: value])
         let js = """
         (function(){
             var l=window.wallpaperPropertyListener;
-            if(l&&l.applyUserProperties){l.applyUserProperties({"\(key)":{value:\(property.jsLiteral(from: value))}});}
+            if(l&&l.applyUserProperties){l.applyUserProperties(\(payload));}
         })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
@@ -171,7 +205,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    // MARK: - Wallpaper Engine JS API Polyfill (~80% coverage)
+    // MARK: - Wallpaper Engine JS API Polyfill
     //
     // Injected at document-start so it runs before any wallpaper scripts.
     // Wallpaper scripts that set window.wallpaperPropertyListener override the stubs,
@@ -185,52 +219,9 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         window._weVersion  = '4.0.0';
         window._wePlatform = 'web';
 
-        // --- Pause-aware timer wrappers ---
-        // Queues RAF/setTimeout/setInterval callbacks while paused and drains on resume.
-        window._wePaused           = false;
-        window._wePendingRAFs      = [];
-        window._wePendingTimeouts  = [];
-        window._wePendingIntervals = [];
-
-        var _raf  = window.requestAnimationFrame.bind(window);
-        var _sto  = window.setTimeout.bind(window);
-        var _siv  = window.setInterval.bind(window);
-        var _cto  = window.clearTimeout.bind(window);
-        var _civ  = window.clearInterval.bind(window);
-
-        window.requestAnimationFrame = function(cb) {
-            if (window._wePaused) { window._wePendingRAFs.push(cb); return -1; }
-            return _raf(cb);
-        };
-        window.setTimeout = function(cb, delay) {
-            if (window._wePaused && typeof cb === 'function') {
-                var id = {cleared: false};
-                window._wePendingTimeouts.push({fn: cb, delay: delay||0, id: id});
-                return id;
-            }
-            return _sto(cb, delay);
-        };
-        window.setInterval = function(cb, delay) {
-            if (window._wePaused && typeof cb === 'function') {
-                var id = {cleared: false};
-                window._wePendingIntervals.push({fn: cb, delay: delay||0, id: id});
-                return id;
-            }
-            return _siv(cb, delay);
-        };
-        window.clearTimeout = function(id) {
-            if (id && typeof id === 'object' && 'cleared' in id) { id.cleared = true; return; }
-            return _cto(id);
-        };
-        window.clearInterval = function(id) {
-            if (id && typeof id === 'object' && 'cleared' in id) { id.cleared = true; return; }
-            return _civ(id);
-        };
-
-        // Expose originals for the resume script
-        window._weOrigRAF = _raf;
-        window._weOrigSetTimeout = _sto;
-        window._weOrigSetInterval = _siv;
+        // Pause timers already scheduled as well as timers created while paused.
+        \(WebPlaybackScripts.timerPolyfill)
+        \(WebPlaybackScripts.animationPolyfill)
 
         // --- Core WE property listener ---
         // Wallpaper scripts replace this with their own object.
@@ -255,7 +246,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
 
         (function() {
             var zero = new Array(128).fill(0);
-            _siv(function() {
+            window.setInterval(function() {
                 if (window._wePaused || window._weAudioCallbacks.length === 0 || window._weAudioActive) return;
                 for (var i = 0; i < window._weAudioCallbacks.length; i++) {
                     try { window._weAudioCallbacks[i](zero); } catch(e) {}
@@ -294,31 +285,6 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
     })();
     """
 
-    /// Pause all animation/timer activity.
-    private static let pauseScript = """
-    (function() {
-        window._wePaused = true;
-        var l = window.wallpaperPropertyListener;
-        if (l && l.setPaused) l.setPaused(true);
-    })();
-    """
-
-    /// Resume animation/timer activity, draining all queued callbacks.
-    private static let resumeScript = """
-    (function() {
-        window._wePaused = false;
-        var rafs = window._wePendingRAFs.splice(0);
-        for (var i = 0; i < rafs.length; i++) { window._weOrigRAF(rafs[i]); }
-        var tos = window._wePendingTimeouts.splice(0);
-        for (var i = 0; i < tos.length; i++) {
-            if (!tos[i].id.cleared) window._weOrigSetTimeout(tos[i].fn, tos[i].delay);
-        }
-        var ivs = window._wePendingIntervals.splice(0);
-        for (var i = 0; i < ivs.length; i++) {
-            if (!ivs[i].id.cleared) window._weOrigSetInterval(ivs[i].fn, ivs[i].delay);
-        }
-        var l = window.wallpaperPropertyListener;
-        if (l && l.setPaused) l.setPaused(false);
-    })();
-    """
+    private static let pauseScript = WebPlaybackScripts.pause
+    private static let resumeScript = WebPlaybackScripts.resume
 }

@@ -1,0 +1,4 @@
+# Keep scripts, fixtures and source hashes stable across macOS and Windows.
+* text=auto eol=lf
+# Preserve recovery and dependency patches byte-for-byte.
+*.patch -text

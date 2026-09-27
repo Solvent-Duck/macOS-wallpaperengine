@@ -1,10 +1,12 @@
 import AppKit
+import NativeSceneRuntime
 
 /// Protocol for wallpaper rendering backends.
 ///
 /// Each wallpaper type (video, web, scene) implements this protocol.
 /// The renderer provides an NSView that is set as the content of a
 /// DesktopWindow for display.
+@MainActor
 protocol WallpaperRenderer: AnyObject {
     /// The view to display in the desktop window.
     var view: NSView { get }
@@ -19,9 +21,11 @@ protocol WallpaperRenderer: AnyObject {
     func stop()
 
     /// Update the cursor position for interactive wallpapers.
-    /// Coordinates are normalized (0.0–1.0) relative to the screen.
+    /// Coordinates are normalized relative to this wallpaper; values outside
+    /// 0–1 represent a pointer on another display or outside the window.
     /// Default implementation is a no-op for non-interactive renderers.
     func updateCursorPosition(_ position: NSPoint)
+    func updateCursorInput(_ position: NSPoint, leftDown: Bool)
 
     /// Whether this renderer supports audio output.
     var supportsAudio: Bool { get }
@@ -45,10 +49,14 @@ protocol WallpaperRenderer: AnyObject {
     /// `data` contains `bandCount` normalized amplitude values (0.0–1.0),
     /// matching Wallpaper Engine's 128-band format.
     func receiveAudioData(_ data: [Float])
+
+    /// Current external-player media snapshot, shared across displays.
+    func updateMediaState(_ state: SceneMediaState)
 }
 
 extension WallpaperRenderer {
     func updateCursorPosition(_ position: NSPoint) {}
+    func updateCursorInput(_ position: NSPoint, leftDown: Bool) { updateCursorPosition(position) }
     var supportsAudio: Bool { false }
     var isMuted: Bool {
         get { true }
@@ -58,4 +66,5 @@ extension WallpaperRenderer {
     func applyProperties(_ properties: [WallpaperProperty], values: [String: String]) {}
     func applyProperty(_ property: WallpaperProperty, value: String) {}
     func receiveAudioData(_ data: [Float]) {}
+    func updateMediaState(_ state: SceneMediaState) {}
 }

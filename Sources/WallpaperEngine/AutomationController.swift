@@ -17,7 +17,7 @@ enum AutomationError: LocalizedError {
 @MainActor
 final class AutomationController {
     private enum Task {
-        case screenshot(URL, Int)
+        case screenshot(URL, Int, TimeInterval)
         case benchmark(URL, TimeInterval)
     }
 
@@ -29,7 +29,7 @@ final class AutomationController {
     init(options: LaunchOptions, completion: @escaping (Int32) -> Void) {
         var pendingTasks: [Task] = []
         if let screenshotPath = options.screenshotPath {
-            pendingTasks.append(.screenshot(URL(fileURLWithPath: screenshotPath), options.renderFrames))
+            pendingTasks.append(.screenshot(URL(fileURLWithPath: screenshotPath), options.renderFrames, options.screenshotTime))
         }
         if let benchmarkPath = options.benchmarkPath {
             pendingTasks.append(.benchmark(URL(fileURLWithPath: benchmarkPath), options.benchmarkDuration))
@@ -58,8 +58,8 @@ final class AutomationController {
         taskIndex += 1
 
         switch task {
-        case .screenshot(let outputURL, let frames):
-            windowManager.requestScreenshot(outputURL: outputURL, afterFrames: frames) { [weak self] result in
+        case .screenshot(let outputURL, let frames, let sceneTime):
+            windowManager.requestScreenshot(outputURL: outputURL, afterFrames: frames, minimumSceneTime: sceneTime) { [weak self] result in
                 self?.handle(result)
             }
         case .benchmark(let outputURL, let duration):

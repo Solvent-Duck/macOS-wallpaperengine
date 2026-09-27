@@ -2,10 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Build C++ bridge only if missing (2-5 min first run, skipped after)
-if [ ! -f build/lib/libwallpaperengine.a ]; then
-    ./build-bridge.sh
-fi
+# Let CMake check every required output and input, including configuration and
+# patches. Its incremental build avoids the old directory-timestamp heuristic.
+./build-bridge.sh
 
 swift build -c release
 

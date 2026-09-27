@@ -15,7 +15,7 @@ enum TagFilterMode: String {
 
 /// Scans a directory for Wallpaper Engine projects and provides
 /// filtering for the gallery UI.
-class GalleryViewModel: ObservableObject {
+class GalleryViewModel: ObservableObject, @unchecked Sendable {
     @Published var wallpapers: [WallpaperProject] = []
     @Published var allTags: [String] = []
     @Published var selectedTags: Set<String> = []

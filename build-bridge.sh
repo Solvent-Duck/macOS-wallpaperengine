@@ -1,76 +1,56 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build linux-wallpaperengine as a static library for macOS.
-# Products:
-#   build/lib/libwallpaperengine.a   — static library
-#   build/include/WEBridge.h         — C bridge header
-
+# Build only the vendored shader and script libraries used by Package.swift.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENGINE_DIR="$SCRIPT_DIR/linux-wallpaperengine"
 BUILD_DIR="$SCRIPT_DIR/build"
-BRIDGE_SRC="$SCRIPT_DIR/Sources/CWEBridge"
-CMAKE_WRAPPER_DIR="$BUILD_DIR/cmake-bridge"
+CMAKE_SOURCE_DIR="$SCRIPT_DIR/cmake/dependencies"
 
-echo "=== Building wallpaperengine bridge ==="
-echo "Engine:  $ENGINE_DIR"
-echo "Build:   $BUILD_DIR"
+# Fail before changing build state if the selected toolchain is unavailable.
+C_COMPILER="$(xcrun -find cc)"
+CXX_COMPILER="$(xcrun -find c++)"
 
-# Ensure submodules are initialized
+# Initialize only missing dependencies. Do not reset existing local checkouts,
+# silently ignore failures, or fetch unrelated nested test suites.
 if [ ! -f "$ENGINE_DIR/CMakeLists.txt" ]; then
-    echo "Initializing git submodules..."
-    cd "$SCRIPT_DIR"
-    git submodule update --init --recursive
+    git -C "$SCRIPT_DIR" submodule update --init -- linux-wallpaperengine
 fi
+for dependency in glslang-WallpaperEngine SPIRV-Cross-WallpaperEngine quickjs json; do
+    if [ ! -f "$ENGINE_DIR/src/External/$dependency/CMakeLists.txt" ]; then
+        git -C "$ENGINE_DIR" submodule update --init -- "src/External/$dependency"
+    fi
+done
 
-# Also init nested submodules (glslang, SPIRV-Cross, etc.)
-cd "$ENGINE_DIR"
-git submodule update --init --recursive 2>/dev/null || true
-
-# Create a wrapper directory with a CMakeLists.txt that includes the bridge config.
-# This avoids modifying the engine's own CMakeLists.txt.
-mkdir -p "$CMAKE_WRAPPER_DIR"
-cat > "$CMAKE_WRAPPER_DIR/CMakeLists.txt" <<'WRAPPER_EOF'
-cmake_minimum_required(VERSION 3.12)
-# Wrapper that redirects to the bridge CMake configuration.
-# All relative paths in CMakeLists-bridge.cmake are resolved relative to
-# the engine source directory via CMAKE_CURRENT_SOURCE_DIR override.
-include("${ENGINE_SOURCE_DIR}/CMakeLists-bridge.cmake")
-WRAPPER_EOF
-
-echo ""
-echo "=== Configuring CMake ==="
-cmake -S "$CMAKE_WRAPPER_DIR" -B "$BUILD_DIR" \
-    -DENGINE_SOURCE_DIR="$ENGINE_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_COMPILER="$(xcrun -find cc)" \
-    -DCMAKE_CXX_COMPILER="$(xcrun -find c++)" \
-    -DCMAKE_OSX_ARCHITECTURES="$(uname -m)" \
-    2>&1
-
-echo ""
-echo "=== Compiling (this may take a few minutes) ==="
-cmake --build "$BUILD_DIR" --parallel "$(sysctl -n hw.logicalcpu)" 2>&1
-
-# Copy products to standard locations
-mkdir -p "$BUILD_DIR/lib" "$BUILD_DIR/include"
-
-# Find and copy the static library
-find "$BUILD_DIR" -name "libwallpaperengine.a" -maxdepth 1 -exec cp {} "$BUILD_DIR/lib/" \; 2>/dev/null || true
-
-# Copy the bridge header
-cp "$BRIDGE_SRC/include/WEBridge.h" "$BUILD_DIR/include/"
-
-echo ""
-echo "=== Build complete ==="
-if [ -f "$BUILD_DIR/lib/libwallpaperengine.a" ]; then
-    LIB_SIZE=$(du -h "$BUILD_DIR/lib/libwallpaperengine.a" | cut -f1)
-    echo "Static library: $BUILD_DIR/lib/libwallpaperengine.a ($LIB_SIZE)"
-    echo "Bridge header:  $BUILD_DIR/include/WEBridge.h"
+mkdir -p "$BUILD_DIR"
+# Patch a generated copy, leaving the nested dependency checkout untouched.
+# Stage first so a malformed patch cannot damage the last usable build source.
+QUICKJS_STAGE="$(mktemp -d "$BUILD_DIR/quickjs-stage.XXXXXX")"
+trap 'rm -rf "$QUICKJS_STAGE"' EXIT
+rsync -a --exclude=.git "$ENGINE_DIR/src/External/quickjs/" "$QUICKJS_STAGE/"
+QUICKJS_PATCH="$SCRIPT_DIR/patches/quickjs-mapped-arguments-gc.patch"
+if git -C "$QUICKJS_STAGE" apply --reverse --check "$QUICKJS_PATCH" 2>/dev/null; then
+    : # Accept an already-applied fix in an existing developer checkout.
 else
-    echo "WARNING: libwallpaperengine.a not found. Check build output for errors."
-    exit 1
+    git -C "$QUICKJS_STAGE" apply --check "$QUICKJS_PATCH"
+    git -C "$QUICKJS_STAGE" apply "$QUICKJS_PATCH"
 fi
-echo ""
-echo "Required Homebrew dependencies:"
-echo "  brew install glew glfw sdl2 lz4 ffmpeg freeglut"
+mkdir -p "$BUILD_DIR/quickjs-source"
+# Checksums keep unchanged patched inputs from forcing recompilation every run.
+rsync -rc --delete "$QUICKJS_STAGE/" "$BUILD_DIR/quickjs-source/"
+
+# CMake cannot reuse a cache after its source directory changes. Preserve other
+# build products; discard only generated configuration from the former bridge.
+if [ -f "$BUILD_DIR/CMakeCache.txt" ] && ! grep -Fqx "CMAKE_HOME_DIRECTORY:INTERNAL=$CMAKE_SOURCE_DIR" "$BUILD_DIR/CMakeCache.txt"; then
+    cmake -E remove -f "$BUILD_DIR/CMakeCache.txt"
+    cmake -E remove_directory "$BUILD_DIR/CMakeFiles"
+fi
+
+cmake -S "$CMAKE_SOURCE_DIR" -B "$BUILD_DIR" \
+    -DENGINE_SOURCE_DIR="$ENGINE_DIR" \
+    -DQUICKJS_SOURCE_DIR="$BUILD_DIR/quickjs-source" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="$C_COMPILER" \
+    -DCMAKE_CXX_COMPILER="$CXX_COMPILER" \
+    -DCMAKE_OSX_ARCHITECTURES="$(uname -m)"
+cmake --build "$BUILD_DIR" --target wallpaper-dependencies --parallel "$(sysctl -n hw.logicalcpu)"

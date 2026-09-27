@@ -1,4 +1,5 @@
 import AppKit
+import NativeSceneRuntime
 
 /// Manages desktop-level windows across all connected displays.
 ///
@@ -13,14 +14,25 @@ import AppKit
 @MainActor
 class DesktopWindowManager {
     private var windows: [DesktopWindow] = []
-    private var renderer: WallpaperRenderer?
+    private var renderers: [WallpaperRenderer] = []
     private var currentProject: WallpaperProject?
+    private var sceneScriptStorage: SceneScriptStorage?
+
+    private var primaryRenderer: WallpaperRenderer? { renderers.first }
     private let occlusionDetector = OcclusionDetector()
     private let cursorTracker = CursorTracker()
-    private let audioReactivity = AudioReactivity()
+    let audioReactivity = AudioReactivity()
+    lazy var mediaIntegration: MediaIntegrationController = {
+        let controller = MediaIntegrationController()
+        controller.onUpdate = { [weak self] state in
+            self?.renderers.forEach { $0.updateMediaState(state) }
+        }
+        return controller
+    }()
     private var isVisible = true
     private var isManuallyPaused = false
     private var isSleeping = false
+    private var isTearingDown = false
     private var lastRebuildTime: Double = 0
     var automationMode = false
 
@@ -32,10 +44,13 @@ class DesktopWindowManager {
     private var propertyValues: [String: String] = [:]
 
     /// The title of the currently loaded wallpaper, if any.
-    var currentTitle: String? { currentProject?.title }
+    var currentTitle: String? { currentProject?.resolvedTitle }
 
     /// Property definitions for the current wallpaper.
-    var currentProperties: [WallpaperProperty] { currentProject?.properties ?? [] }
+    var currentProperties: [WallpaperProperty] { currentProject?.resolvedProperties ?? [] }
+
+    /// Scene-native default resolution for the current wallpaper, when available.
+    var currentSceneResolution: CGSize? { currentProject?.sceneResolution }
 
     /// Current (user-modified or default) property values.
     var currentPropertyValues: [String: String] { propertyValues }
@@ -43,6 +58,8 @@ class DesktopWindowManager {
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
         rebuildWindows()
+
+        guard !automationMode else { return }
 
         NotificationCenter.default.addObserver(
             self,
@@ -74,7 +91,7 @@ class DesktopWindowManager {
     /// Hold an NSProcessInfo activity token while rendering to prevent App Nap
     /// from throttling the render loop. Released when the wallpaper is paused or stopped.
     private func updateAppNapAssertion() {
-        let shouldHold = renderer != nil && canResume
+        let shouldHold = !renderers.isEmpty && canResume
         if shouldHold && appNapActivity == nil {
             appNapActivity = ProcessInfo.processInfo.beginActivity(
                 options: .userInitiatedAllowingIdleSystemSleep,
@@ -86,6 +103,19 @@ class DesktopWindowManager {
             appNapActivity = nil
             print("[WallpaperEngine] App Nap assertion released")
         }
+        updateAudioReactivity()
+    }
+
+    private func updateAudioReactivity() {
+        // Captures use explicit test inputs, independent of desktop audio.
+        guard !automationMode, !isTearingDown, canResume, !renderers.isEmpty,
+              currentProject?.resolvedType == .scene || currentProject?.resolvedType == .web else {
+            audioReactivity.stop()
+            return
+        }
+        audioReactivity.start { [weak self] data in
+            self?.renderers.forEach { $0.receiveAudioData(data) }
+        }
     }
 
     // MARK: - Wallpaper Loading
@@ -94,27 +124,43 @@ class DesktopWindowManager {
     func loadWallpaper(from url: URL) {
         // Stop any existing wallpaper
         audioReactivity.stop()
-        renderer?.stop()
-        renderer = nil
+        mediaIntegration.stop()
+        let previousRenderers = renderers
+        renderers = []
+        previousRenderers.forEach { $0.stop() }
 
         do {
             let project = try WallpaperLoader.load(from: url)
             currentProject = project
-            print("[WallpaperEngine] Loaded project: \"\(project.title)\" (type: \(project.type.rawValue))")
+            print("[WallpaperEngine] Loaded project: \"\(project.resolvedTitle)\" (type: \(project.resolvedType.rawValue))")
 
             guard let fileURL = project.fileURL else {
                 print("[WallpaperEngine] Error: Could not resolve wallpaper file URL")
                 return
             }
 
-            let newRenderer = try createRenderer(for: project, fileURL: fileURL)
-            renderer = newRenderer
-            PerformanceMonitor.shared.setRenderer(type: project.type.rawValue.capitalized, status: "Playing")
+            sceneScriptStorage = nil
+            if project.resolvedType == .scene {
+                let directory = automationMode ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+                    .appendingPathComponent("WallpaperEngine/SceneScriptStorage", isDirectory: true)
+                let identity = SceneScriptStorage.wallpaperIdentity(
+                    workshopID: project.type == .preset ? nil : project.sceneDescription?.metadata.workshopId,
+                    directory: project.directoryURL ?? fileURL
+                )
+                sceneScriptStorage = try SceneScriptStorage(directory: directory, wallpaperID: identity)
+            }
+            let newRenderers = try windows.map { window in
+                try createRenderer(for: project, fileURL: fileURL, screen: window.screen)
+            }
+            renderers = newRenderers
+            PerformanceMonitor.shared.setRenderer(type: project.resolvedType.rawValue.capitalized, status: "Playing")
 
             // Load persisted property values, merge with defaults
             let saved = loadPropertyValues(for: project)
-            propertyValues = mergedValues(properties: project.properties, saved: saved)
-            newRenderer.applyProperties(project.properties, values: propertyValues)
+            let resolvedProperties = project.resolvedProperties
+            propertyValues = mergedValues(properties: resolvedProperties, saved: saved)
+            newRenderers.forEach { $0.applyProperties(resolvedProperties, values: propertyValues) }
+            startMediaIntegrationIfNeeded()
 
             // Set the renderer's view as content on all desktop windows
             applyRendererToWindows()
@@ -124,14 +170,9 @@ class DesktopWindowManager {
 
             // Only start playing if all conditions allow it
             if canResume {
-                newRenderer.play()
+                newRenderers.forEach { $0.play() }
             }
             updateAppNapAssertion()
-
-            // Start audio reactivity — forwards frequency data to the renderer at ~30fps
-            audioReactivity.start { [weak self] data in
-                self?.renderer?.receiveAudioData(data)
-            }
 
         } catch {
             print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
@@ -141,7 +182,7 @@ class DesktopWindowManager {
     /// Manually pause the current wallpaper.
     func pauseWallpaper() {
         isManuallyPaused = true
-        renderer?.pause()
+        renderers.forEach { $0.pause() }
         cursorTracker.stop()
         updateAppNapAssertion()
         PerformanceMonitor.shared.logEvent("Manual pause")
@@ -152,7 +193,7 @@ class DesktopWindowManager {
     func resumeWallpaper() {
         isManuallyPaused = false
         if canResume {
-            renderer?.play()
+            renderers.forEach { $0.play() }
             startCursorTracking()
             PerformanceMonitor.shared.setRendererStatus("Playing")
         }
@@ -161,12 +202,12 @@ class DesktopWindowManager {
     }
 
     /// Whether the current renderer supports audio.
-    var supportsAudio: Bool { renderer?.supportsAudio ?? false }
+    var supportsAudio: Bool { primaryRenderer?.supportsAudio ?? false }
 
     /// Whether audio is currently muted.
     var isMuted: Bool {
-        get { renderer?.isMuted ?? true }
-        set { renderer?.isMuted = newValue }
+        get { primaryRenderer?.isMuted ?? true }
+        set { renderers.forEach { $0.isMuted = newValue } }
     }
 
     /// Explicitly stop all rendering and close desktop windows before app termination.
@@ -176,12 +217,20 @@ class DesktopWindowManager {
     /// Without this, SDL2's atexit handler fires while the main thread is already in
     /// `exit()`, causing a deadlock that prevents the process from exiting cleanly.
     func teardown() {
+        guard !isTearingDown else {
+            print("[WallpaperEngine] Teardown already in progress")
+            return
+        }
+        isTearingDown = true
         audioReactivity.stop()
+        mediaIntegration.stop()
         cursorTracker.stop()
         occlusionDetector.stop()
-        renderer?.stop()
-        renderer = nil
+        let activeRenderers = renderers
+        renderers = []
+        activeRenderers.forEach { $0.stop() }
         currentProject = nil
+        propertyValues = [:]
         if let activity = appNapActivity {
             ProcessInfo.processInfo.endActivity(activity)
             appNapActivity = nil
@@ -198,9 +247,11 @@ class DesktopWindowManager {
     /// Stop and remove the current wallpaper.
     func clearWallpaper() {
         audioReactivity.stop()
+        mediaIntegration.stop()
         cursorTracker.stop()
-        renderer?.stop()
-        renderer = nil
+        let activeRenderers = renderers
+        renderers = []
+        activeRenderers.forEach { $0.stop() }
         currentProject = nil
         isManuallyPaused = false
         propertyValues = [:]
@@ -214,22 +265,41 @@ class DesktopWindowManager {
     /// Apply a single property change from the UI and persist it.
     func applyProperty(key: String, value: String) {
         propertyValues[key] = value
-        if let prop = currentProject?.properties.first(where: { $0.key == key }) {
-            renderer?.applyProperty(prop, value: value)
+        if let prop = currentProject?.resolvedProperties.first(where: { $0.key == key }) {
+            renderers.forEach { $0.applyProperty(prop, value: value) }
         }
         savePropertyValues()
     }
 
-    func requestScreenshot(outputURL: URL, afterFrames: Int, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let sceneRenderer = renderer as? SceneRenderer else {
+    func resetProperties() -> Bool {
+        guard let project = currentProject else { return false }
+        // Finish destroy callbacks before clearing storage; they can save data.
+        let restartScene = sceneScriptStorage != nil
+        if restartScene { renderers.forEach { $0.stop() } }
+        do { try sceneScriptStorage?.reset() }
+        catch {
+            print("[WallpaperEngine] Could not reset script storage: \(error.localizedDescription)")
+            NSAlert(error: error).runModal()
+            if canResume { renderers.forEach { $0.play() } }
+            return false
+        }
+        propertyValues = mergedValues(properties: project.resolvedProperties, saved: [:])
+        renderers.forEach { $0.applyProperties(project.resolvedProperties, values: propertyValues) }
+        savePropertyValues()
+        if restartScene && canResume { renderers.forEach { $0.play() } }
+        return true
+    }
+
+    func requestScreenshot(outputURL: URL, afterFrames: Int, minimumSceneTime: TimeInterval = 0, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let sceneRenderer = primaryRenderer as? SceneRenderer else {
             completion(.failure(AutomationError.unsupportedRenderer))
             return
         }
-        sceneRenderer.requestScreenshot(outputURL: outputURL, afterFrames: afterFrames, completion: completion)
+        sceneRenderer.requestScreenshot(outputURL: outputURL, afterFrames: afterFrames, minimumSceneTime: minimumSceneTime, completion: completion)
     }
 
     func requestBenchmark(outputURL: URL, duration: TimeInterval, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let sceneRenderer = renderer as? SceneRenderer else {
+        guard let sceneRenderer = primaryRenderer as? SceneRenderer else {
             completion(.failure(AutomationError.unsupportedRenderer))
             return
         }
@@ -238,8 +308,8 @@ class DesktopWindowManager {
 
     // MARK: - Private
 
-    private func createRenderer(for project: WallpaperProject, fileURL: URL) throws -> WallpaperRenderer {
-        switch project.type {
+    private func createRenderer(for project: WallpaperProject, fileURL: URL, screen: NSScreen?) throws -> WallpaperRenderer {
+        switch project.resolvedType {
         case .video:
             let resolvedURL: URL
             if WebMTranscoder.isWebM(fileURL) {
@@ -249,38 +319,43 @@ class DesktopWindowManager {
             }
             return VideoRenderer(fileURL: resolvedURL)
         case .web:
-            return WebRenderer(fileURL: fileURL)
+            return WebRenderer(fileURL: fileURL, readAccessURL: project.type == .preset ? project.directoryURL?.deletingLastPathComponent() : nil)
         case .scene:
-            guard let dirURL = project.directoryURL else {
+            guard let dirURL = project.contentDirectoryURL ?? project.directoryURL else {
                 throw WallpaperError.unsupportedType(.scene)
             }
-            return SceneRenderer(directoryURL: dirURL)
+            let screenID: String
+            if let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+               let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() {
+                screenID = CFUUIDCreateString(nil, uuid) as String
+            } else {
+                screenID = screen?.localizedName ?? "default"
+            }
+            return SceneRenderer(directoryURL: dirURL, sceneDescription: project.sceneDescription,
+                                 scriptStorage: sceneScriptStorage?.forScreen(screenID),
+                                 unappliedPresetOptions: Array(project.presetSettings.keys))
         case .preset, .application:
             throw WallpaperError.unsupportedType(project.type)
         }
     }
 
     private func startCursorTracking() {
-        cursorTracker.start { [weak self] screenPoint in
-            guard let self, let renderer = self.renderer else { return }
-            // Normalize relative to the primary screen
-            if let screen = NSScreen.main {
-                let normalized = CursorTracker.normalize(screenPoint, for: screen)
-                renderer.updateCursorPosition(normalized)
+        cursorTracker.start { [weak self] screenPoint, leftDown in
+            guard let self else { return }
+            for (window, renderer) in zip(self.windows, self.renderers) {
+                let normalized = CursorTracker.normalize(screenPoint, in: window.frame)
+                renderer.updateCursorInput(normalized, leftDown: leftDown)
             }
         }
     }
 
     private func applyRendererToWindows() {
-        guard let renderer else { return }
-
-        for window in windows {
-            // All windows share the same renderer view for now.
-            // For multi-monitor with independent wallpapers, each window
-            // would get its own renderer instance.
-            window.contentView = renderer.view
-            renderer.view.frame = window.contentView?.bounds ?? window.frame
-            renderer.view.autoresizingMask = [.width, .height]
+        for (index, window) in windows.enumerated() {
+            guard index < renderers.count else { break }
+            let r = renderers[index]
+            window.contentView = r.view
+            r.view.frame = window.contentView?.bounds ?? window.frame
+            r.view.autoresizingMask = [.width, .height]
         }
     }
 
@@ -318,6 +393,14 @@ class DesktopWindowManager {
         (automationMode || isVisible) && !isManuallyPaused && !isSleeping
     }
 
+    private func startMediaIntegrationIfNeeded() {
+        // Automation captures use their explicitly supplied inputs, independent
+        // of whichever media a user might be playing on the desktop.
+        guard !automationMode, !isSleeping, currentProject?.resolvedType == .scene else { return }
+        renderers.forEach { $0.updateMediaState(mediaIntegration.state) }
+        mediaIntegration.start()
+    }
+
     private func handleVisibilityChange(_ visible: Bool) {
         if automationMode {
             return
@@ -326,11 +409,11 @@ class DesktopWindowManager {
         isVisible = visible
 
         if visible && !isManuallyPaused && !isSleeping {
-            renderer?.play()
+            renderers.forEach { $0.play() }
             startCursorTracking()
             print("[WallpaperEngine] Desktop visible — resuming renderer")
         } else if !visible {
-            renderer?.pause()
+            renderers.forEach { $0.pause() }
             cursorTracker.stop()
             print("[WallpaperEngine] Desktop fully occluded — pausing renderer")
         }
@@ -341,7 +424,8 @@ class DesktopWindowManager {
     @objc private func handleSleep(_ notification: Notification) {
         guard !isSleeping else { return }
         isSleeping = true
-        renderer?.pause()
+        mediaIntegration.stop()
+        renderers.forEach { $0.pause() }
         cursorTracker.stop()
         updateAppNapAssertion()
         print("[WallpaperEngine] Sleep/lock — pausing renderer (\(notification.name.rawValue))")
@@ -351,12 +435,14 @@ class DesktopWindowManager {
     @objc private func handleWake(_ notification: Notification) {
         guard isSleeping else { return }
         isSleeping = false
+        startMediaIntegrationIfNeeded()
         if canResume {
-            // Check if the scene renderer flagged that it needs recovery
-            if let sceneRenderer = renderer as? SceneRenderer, sceneRenderer.needsRecovery {
-                sceneRenderer.recoverFromSleep()
+            // Check if any scene renderer flagged that it needs recovery
+            let sceneRenderers = renderers.compactMap { $0 as? SceneRenderer }
+            if sceneRenderers.contains(where: { $0.needsRecovery }) {
+                sceneRenderers.forEach { $0.recoverFromSleep() }
             } else {
-                renderer?.play()
+                renderers.forEach { $0.play() }
             }
             startCursorTracking()
         }

@@ -1,7 +1,19 @@
 .DS_Store
 /.build
+/build
 /Packages
 xcuserdata/
 DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+# Generated compatibility-test evidence. Keep committed summaries in source docs,
+# but do not stage per-run captures, copied fixtures, or logs.
+CompatibilitySuite/reports/
+
+# Local caches and recovery snapshots.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+/.repo-backups/
+/.claude/settings.local.json
+/.claude/worktrees/

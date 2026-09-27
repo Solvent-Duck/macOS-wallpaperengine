@@ -1,2 +1,0 @@
-/Library/Developer/CommandLineTools/usr/bin/ar qc libkissfft-float.a CMakeFiles/kissfft.dir/kiss_fft.c.o CMakeFiles/kissfft.dir/kfc.c.o CMakeFiles/kissfft.dir/kiss_fftnd.c.o CMakeFiles/kissfft.dir/kiss_fftndr.c.o CMakeFiles/kissfft.dir/kiss_fftr.c.o
-/Library/Developer/CommandLineTools/usr/bin/ranlib libkissfft-float.a

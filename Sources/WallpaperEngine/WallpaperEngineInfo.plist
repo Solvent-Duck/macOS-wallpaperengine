@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Preserve the existing unbundled executable's preferences/identity.
+         Adding a bundle identifier changes UserDefaults.standard's domain. -->
+    <key>CFBundleName</key>
+    <string>WallpaperEngine</string>
+    <key>CFBundleExecutable</key>
+    <string>WallpaperEngine</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Show the current song, album artwork and playback progress from Music or Spotify in your wallpaper.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Use audio input to animate audio-reactive wallpapers.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Use sound playing on your Mac to animate audio-reactive wallpapers. Audio is analyzed in memory and is not recorded.</string>
+</dict>
+</plist>

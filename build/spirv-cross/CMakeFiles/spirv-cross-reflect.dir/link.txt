@@ -1,2 +1,0 @@
-/Library/Developer/CommandLineTools/usr/bin/ar qc libspirv-cross-reflect.a "CMakeFiles/spirv-cross-reflect.dir/spirv_reflect.cpp.o"
-/Library/Developer/CommandLineTools/usr/bin/ranlib libspirv-cross-reflect.a

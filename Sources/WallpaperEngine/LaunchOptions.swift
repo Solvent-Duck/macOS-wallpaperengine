@@ -6,6 +6,7 @@ struct LaunchOptions {
     let benchmarkPath: String?
     let renderFrames: Int
     let benchmarkDuration: TimeInterval
+    var screenshotTime: TimeInterval = 0
 
     var isAutomation: Bool {
         screenshotPath != nil || benchmarkPath != nil
@@ -17,6 +18,7 @@ struct LaunchOptions {
         var benchmarkPath: String?
         var renderFrames = 60
         var benchmarkDuration: TimeInterval = 5
+        var screenshotTime: TimeInterval = 0
 
         var index = 1
         while index < arguments.count {
@@ -42,6 +44,13 @@ struct LaunchOptions {
                     benchmarkDuration = max(value, 0.1)
                     index += 1
                 }
+            case "--screenshot-time":
+                if index + 1 < arguments.count {
+                    if let value = Double(arguments[index + 1]), value.isFinite {
+                        screenshotTime = max(value, 0)
+                    }
+                    index += 1
+                }
             default:
                 if !argument.hasPrefix("--") && wallpaperPath == nil {
                     wallpaperPath = argument
@@ -56,7 +65,8 @@ struct LaunchOptions {
             screenshotPath: screenshotPath,
             benchmarkPath: benchmarkPath,
             renderFrames: renderFrames,
-            benchmarkDuration: benchmarkDuration
+            benchmarkDuration: benchmarkDuration,
+            screenshotTime: screenshotTime
         )
     }
 }

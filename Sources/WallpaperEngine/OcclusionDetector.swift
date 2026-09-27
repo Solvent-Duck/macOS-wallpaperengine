@@ -9,6 +9,7 @@ import AppKit
 ///
 /// Uses NSWindow's `occlusionState` property which macOS updates via the
 /// WindowServer — no polling required.
+@MainActor
 class OcclusionDetector {
     private var observations: [NSKeyValueObservation] = []
     private var onVisibilityChanged: ((Bool) -> Void)?
@@ -26,8 +27,8 @@ class OcclusionDetector {
         self.trackedWindows = windows
 
         for window in windows {
-            let observation = window.observe(\.occlusionState, options: [.new]) { [weak self] window, _ in
-                self?.evaluateVisibility()
+            let observation = window.observe(\.occlusionState, options: [.new]) { [weak self] _, _ in
+                DispatchQueue.main.async { self?.evaluateVisibility() }
             }
             observations.append(observation)
         }
@@ -65,7 +66,4 @@ class OcclusionDetector {
         onVisibilityChanged?(anyVisible)
     }
 
-    deinit {
-        stop()
-    }
 }

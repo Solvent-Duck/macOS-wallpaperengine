@@ -1,2 +1,0 @@
-/Library/Developer/CommandLineTools/usr/bin/ar qc libOSDependent.a "CMakeFiles/OSDependent.dir/Users/isaiahbergstrom/Projects/macOS-wallpaperengine/linux-wallpaperengine/src/External/glslang-WallpaperEngine/glslang/stub.cpp.o"
-/Library/Developer/CommandLineTools/usr/bin/ranlib libOSDependent.a

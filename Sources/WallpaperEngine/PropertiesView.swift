@@ -8,12 +8,15 @@ final class PropertyStore: ObservableObject {
     let properties: [WallpaperProperty]
     @Published var values: [String: String]
     let onChange: (String, String) -> Void
+    let onReset: (() -> Bool)?
 
     init(properties: [WallpaperProperty],
          values: [String: String],
-         onChange: @escaping (String, String) -> Void) {
+         onChange: @escaping (String, String) -> Void,
+         onReset: (() -> Bool)? = nil) {
         self.properties = properties
         self.onChange   = onChange
+        self.onReset = onReset
         // Seed values: use provided entry or fall back to property default
         var merged = [String: String]()
         for p in properties { merged[p.key] = values[p.key] ?? p.defaultValue }
@@ -26,9 +29,10 @@ final class PropertyStore: ObservableObject {
     }
 
     func resetToDefaults() {
+        if let onReset, !onReset() { return }
         for p in properties {
             values[p.key] = p.defaultValue
-            onChange(p.key, p.defaultValue)
+            if onReset == nil { onChange(p.key, p.defaultValue) }
         }
     }
 }
@@ -55,7 +59,7 @@ struct PropertiesView: View {
             HStack {
                 Spacer()
                 Button("Reset to Defaults") { store.resetToDefaults() }
-                    .disabled(editableProperties.isEmpty)
+                    .disabled(editableProperties.isEmpty && store.onReset == nil)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -127,8 +131,10 @@ private struct SliderControl: View {
     let prop: WallpaperProperty
     @ObservedObject var store: PropertyStore
 
-    private var lo: Double { prop.min ?? 0 }
-    private var hi: Double { prop.max ?? 1 }
+    // Some authored sliders list their endpoints in descending order. SwiftUI
+    // requires an ascending range; keep the original metadata and value intact.
+    private var lo: Double { min(prop.min ?? 0, prop.max ?? 1) }
+    private var hi: Double { max(prop.min ?? 0, prop.max ?? 1) }
     private var stride: Double { prop.step ?? max((hi - lo) / 100, 0.001) }
     private var decimals: Int { prop.precision ?? 2 }
 
@@ -141,7 +147,13 @@ private struct SliderControl: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Slider(value: binding, in: lo...hi, step: stride)
+            if lo == hi {
+                // There is no editable range, and a stepped zero-length slider
+                // traps inside SwiftUI. Preserve the value in a disabled control.
+                Slider(value: .constant(lo), in: lo...hi).disabled(true)
+            } else {
+                Slider(value: binding, in: lo...hi, step: stride)
+            }
             Text(String(format: "%.\(decimals)f", binding.wrappedValue))
                 .font(.caption.monospacedDigit())
                 .frame(width: 42, alignment: .trailing)
@@ -236,6 +248,7 @@ private struct TextControl: View {
 // MARK: - Window Controller
 
 /// Manages the floating properties panel. Owned by AppDelegate.
+@MainActor
 final class PropertiesWindowController: NSObject {
     private var panel: NSPanel?
 
@@ -243,8 +256,9 @@ final class PropertiesWindowController: NSObject {
     func show(title: String,
               properties: [WallpaperProperty],
               values: [String: String],
-              onChange: @escaping (String, String) -> Void) {
-        let store = PropertyStore(properties: properties, values: values, onChange: onChange)
+              onChange: @escaping (String, String) -> Void,
+              onReset: (() -> Bool)? = nil) {
+        let store = PropertyStore(properties: properties, values: values, onChange: onChange, onReset: onReset)
         let rootView = PropertiesView(store: store)
         let vc = NSHostingController(rootView: rootView)
 

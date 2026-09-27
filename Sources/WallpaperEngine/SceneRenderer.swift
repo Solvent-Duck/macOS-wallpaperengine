@@ -2,27 +2,37 @@ import AppKit
 import Foundation
 import Metal
 import MetalKit
+import NativeSceneCore
+import NativeSceneRenderer
+import NativeSceneRuntime
 import QuartzCore
 import CoreVideo
-import CWEBridge
 
-/// Renders Wallpaper Engine scene wallpapers through the embedded native bridge using Metal.
-///
-/// Uses `WEBridge.h` to talk to the embedded scene runtime, which handles scene parsing,
-/// shader compilation, and frame rendering into `MTLTexture` objects that are blitted into
-/// an `MTKView`.
+/// Renders scene wallpapers through the standalone native Metal path.
 ///
 /// ## Performance
 /// - Rendering is driven by a CVDisplayLink capped at 30fps.
 /// - When paused, the CVDisplayLink is stopped entirely (zero GPU cost).
-/// - No pixel readback: the engine texture is blitted directly (zero-copy Metal path).
+/// - No pixel readback: the renderer texture is blitted directly (zero-copy Metal path).
 @MainActor
 class SceneRenderer: WallpaperRenderer {
+    private struct RenderStartupError: LocalizedError {
+        let message: String
+
+        var errorDescription: String? { message }
+    }
+
     let view: NSView
     private let wallpaperPath: String
-    private var context: WEContextRef?
+    private let wallpaperDirectoryURL: URL
+    private let sceneDescription: SceneDescription?
+    private let scriptStorage: SceneScriptStorage?
+    private let unappliedPresetOptions: [String]
+    private var nativeRenderer: NativeSceneRenderer?
     private var metalView: SceneMetalView?
     private var displayLink: CVDisplayLink?
+    nonisolated private let displayLinkFrames = DisplayLinkFrameGate()
+    private var automationTimer: Timer?
     private var lastRenderTime: Double = 0
     private var isPlaying = false
     private var consecutiveZeroTextureFrames = 0
@@ -31,6 +41,17 @@ class SceneRenderer: WallpaperRenderer {
     private var renderedFrameCount = 0
     private var screenshotRequest: ScreenshotRequest?
     private var benchmarkRequest: BenchmarkRequest?
+    private var animationReferenceTexture: MTLTexture?
+    private var animationReferenceTime: Double?
+    private var propertyValues: [String: String] = [:]
+    private var propertyDefinitions: [String: WallpaperProperty] = [:]
+    private var startupError: Error?
+    private var cursorPosition: NSPoint?
+    private var cursorLeftDown = false
+    private var soundPlayer: SceneSoundPlayer?
+    private var latestSoundTransports: [FrameSoundTransport] = []
+    private var soundSceneRevision: UInt64?
+    private var latestMediaState = SceneMediaState()
 
     // Shared Metal device and command queue (created once, reused across context recreations).
     private let device: MTLDevice
@@ -38,6 +59,7 @@ class SceneRenderer: WallpaperRenderer {
 
     private struct ScreenshotRequest {
         let targetFrame: Int
+        let minimumSceneTime: Double
         let outputURL: URL
         let completion: (Result<Void, Error>) -> Void
     }
@@ -48,28 +70,12 @@ class SceneRenderer: WallpaperRenderer {
         let completion: (Result<Void, Error>) -> Void
     }
 
-    /// Default path to Wallpaper Engine's shared assets directory.
-    /// Users can override this via UserDefaults "WEAssetsPath".
-    private static var assetsPath: String {
-        if let custom = UserDefaults.standard.string(forKey: "WEAssetsPath"), !custom.isEmpty {
-            return custom
-        }
-        let candidates = [
-            NSHomeDirectory() + "/wallpaper_engine/assets",
-            NSHomeDirectory() + "/Library/Application Support/wallpaper_engine/assets",
-            NSHomeDirectory() + "/.local/share/wallpaper_engine/assets",
-            "/usr/local/share/wallpaper_engine/assets",
-        ]
-        for path in candidates {
-            if FileManager.default.fileExists(atPath: path) {
-                return path
-            }
-        }
-        return candidates[0]
-    }
-
-    init(directoryURL: URL) {
+    init(directoryURL: URL, sceneDescription: SceneDescription? = nil, scriptStorage: SceneScriptStorage? = nil, unappliedPresetOptions: [String] = []) {
         self.wallpaperPath = directoryURL.path
+        self.wallpaperDirectoryURL = directoryURL
+        self.sceneDescription = sceneDescription
+        self.scriptStorage = scriptStorage
+        self.unappliedPresetOptions = unappliedPresetOptions
 
         guard let dev = MTLCreateSystemDefaultDevice() else {
             fatalError("[SceneRenderer] No Metal device available")
@@ -89,123 +95,214 @@ class SceneRenderer: WallpaperRenderer {
     func play() {
         if isPlaying { return }
 
-        let frame = view.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 1920, height: 1080) : view.bounds
-        let width  = Int32(frame.width)
-        let height = Int32(frame.height)
-
-        if context == nil {
-            print("[SceneRenderer] Creating Metal engine context: \(width)x\(height), assets: \(Self.assetsPath)")
-
-            let devicePtr       = Unmanaged.passUnretained(device).toOpaque()
-            let commandQueuePtr = Unmanaged.passUnretained(commandQueue).toOpaque()
-
-            guard let ctx = we_create_context_metal(
-                wallpaperPath, Self.assetsPath, width, height,
-                devicePtr, commandQueuePtr
-            ) else {
-                print("[SceneRenderer] Failed to create Metal engine context for: \(wallpaperPath)")
-                showError("Failed to initialize scene renderer")
+        if nativeRenderer == nil {
+            guard let sceneDescription else {
+                let error = RenderStartupError(message: "Scene description is unavailable")
+                startupError = error
+                showError(error.localizedDescription)
+                failPendingAutomation(with: error)
+                print("[SceneRenderer] Missing native scene description for: \(wallpaperPath)")
                 return
             }
-            context = ctx
-            print("[SceneRenderer] Metal engine context created successfully")
 
-            setupMetalView(engineContext: ctx)
+            let support = NativeSceneRenderer.support(scene: sceneDescription)
+            if let reportLine = Self.supportReportLine(for: sceneDescription, unappliedPresetOptions: unappliedPresetOptions) {
+                print("[SceneRenderer] Native support report: \(reportLine)")
+            }
+            if let reason = support.reason, !reason.isEmpty {
+                print("[SceneRenderer] Native scene support notes: \(reason)")
+            }
+
+            do {
+                nativeRenderer = try NativeSceneRenderer(
+                    scene: sceneDescription,
+                    device: device,
+                    assetRoots: [
+                        wallpaperDirectoryURL,
+                        URL(fileURLWithPath: WallpaperAssets.defaultAssetsPath, isDirectory: true),
+                    ] + sceneDescription.extractedRoots,
+                    scriptStorage: scriptStorage
+                )
+                startupError = nil
+                nativeRenderer?.updateMediaState(latestMediaState)
+                setupMetalView()
+                if let cursorPosition {
+                    nativeRenderer?.updateCursorInput(cursorPosition, leftDown: cursorLeftDown)
+                }
+                print("[SceneRenderer] Using standalone native renderer for: \(wallpaperPath)")
+            } catch {
+                startupError = error
+                showError(error.localizedDescription)
+                failPendingAutomation(with: error)
+                print("[SceneRenderer] Native renderer initialization failed for \(wallpaperPath): \(error.localizedDescription)")
+                return
+            }
+            applyStoredProperties()
         }
 
-        we_set_paused(context, 0)
         startDisplayLink()
         isPlaying = true
-        print("[SceneRenderer] Playing: \(wallpaperPath)")
+        updateSoundPlayback()
+        print("[SceneRenderer] Playing: \(wallpaperPath) [backend: native]")
+    }
+
+    static func supportReportLine(for scene: SceneDescription, unappliedPresetOptions: [String]) -> String? {
+        guard let original = NativeSceneRenderer.supportReportLine(for: scene) else { return nil }
+        guard !unappliedPresetOptions.isEmpty,
+              var report = try? JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any] else { return original }
+        if report["parityStatus"] as? String != "unsupported" { report["parityStatus"] = "partial" }
+        var subsystems = report["placeholderSubsystems"] as? [String] ?? []
+        subsystems.append("preset-options")
+        report["placeholderSubsystems"] = Array(Set(subsystems)).sorted()
+        report["unappliedPresetOptions"] = unappliedPresetOptions.sorted()
+        guard let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) else { return original }
+        return String(data: data, encoding: .utf8)
     }
 
     func pause() {
+        nativeRenderer?.cancelCursorInteraction()
         guard isPlaying else { return }
         stopDisplayLink()
-        we_set_paused(context, 1)
         isPlaying = false
+        updateSoundPlayback()
         print("[SceneRenderer] Paused")
     }
 
     func stop() {
         stopDisplayLink()
-        if let ctx = context {
-            we_destroy_context(ctx)
-            context = nil
-        }
+        nativeRenderer = nil
         metalView?.removeFromSuperview()
         metalView = nil
         isPlaying = false
+        startupError = nil
+        soundPlayer?.dispose()
+        soundPlayer = nil
+        latestSoundTransports = []
+        soundSceneRevision = nil
         print("[SceneRenderer] Stopped")
     }
 
     func updateCursorPosition(_ position: NSPoint) {
-        guard let ctx = context else { return }
-        we_set_mouse_position(ctx, Float(position.x), Float(position.y))
+        updateCursorInput(position, leftDown: cursorLeftDown)
+    }
+
+    func updateMediaState(_ state: SceneMediaState) {
+        latestMediaState = state
+        nativeRenderer?.updateMediaState(state)
+    }
+
+    func updateCursorInput(_ position: NSPoint, leftDown: Bool) {
+        guard position.x.isFinite, position.y.isFinite else { return }
+        cursorPosition = position
+        cursorLeftDown = leftDown
+        nativeRenderer?.updateCursorInput(position, leftDown: leftDown)
     }
 
     var supportsAudio: Bool { true }
 
     var isMuted: Bool = true {
-        didSet {}
-    }
-
-    func applyProperties(_ properties: [WallpaperProperty], values: [String: String]) {
-        guard let ctx = context else { return }
-        for prop in properties {
-            let value = values[prop.key] ?? prop.defaultValue
-            we_set_property(ctx, prop.key, value)
+        didSet {
+            updateSoundPlayback()
         }
     }
 
+    /// Physical output is gated independently from the runtime's logical
+    /// per-layer state. Muting or pausing never rewrites a layer command.
+    private func updateSoundPlayback() {
+        let enabled = !isMuted && isPlaying
+        let soundScene = nativeRenderer?.scene ?? sceneDescription
+        let revision = nativeRenderer?.sceneRevision
+        func roots(for scene: SceneDescription) -> [URL] {
+            [wallpaperDirectoryURL, URL(fileURLWithPath: WallpaperAssets.defaultAssetsPath, isDirectory: true)]
+                + scene.extractedRoots
+        }
+        // Wait for the first evaluated packet, including authored startup
+        // scripts, before realizing any sound. Keep a player with unavailable
+        // assets so its failure cache and terminal feedback survive frames.
+        if enabled, !latestSoundTransports.isEmpty, soundPlayer == nil, let soundScene {
+            soundPlayer = SceneSoundPlayer(scene: soundScene, assetRoots: roots(for: soundScene))
+            soundSceneRevision = revision
+        } else if let soundPlayer, let soundScene, revision != soundSceneRevision {
+            soundPlayer.updateScene(soundScene, assetRoots: roots(for: soundScene))
+            soundSceneRevision = revision
+        }
+        soundPlayer?.reconcile(latestSoundTransports, outputEnabled: enabled)
+        guard let nativeRenderer else { return }
+        for (nodeID, runID, finished) in soundPlayer?.drainTerminalStatuses() ?? [] {
+            nativeRenderer.updateSoundPlaybackStatus(nodeID: nodeID, runID: runID, finished: finished)
+        }
+    }
+
+    private func reconcileSoundTransport(_ transports: [FrameSoundTransport]) {
+        latestSoundTransports = transports
+        updateSoundPlayback()
+    }
+
+
+    func applyProperties(_ properties: [WallpaperProperty], values: [String: String]) {
+        for prop in properties {
+            propertyDefinitions[prop.key] = prop
+            propertyValues[prop.key] = values[prop.key] ?? prop.defaultValue
+        }
+        applyStoredProperties()
+    }
+
     func applyProperty(_ property: WallpaperProperty, value: String) {
-        guard let ctx = context else { return }
-        we_set_property(ctx, property.key, value)
+        propertyDefinitions[property.key] = property
+        propertyValues[property.key] = value
+        applyStoredProperties()
     }
 
     func receiveAudioData(_ data: [Float]) {
-        guard let ctx = context, isPlaying else { return }
-        data.withUnsafeBufferPointer { ptr in
-            we_set_audio_data(ctx, ptr.baseAddress, Int32(ptr.count))
+        guard isPlaying else { return }
+
+        if let nativeRenderer {
+            nativeRenderer.updateAudio(Self.makeAudioState(from: data))
         }
     }
 
     func recoverFromSleep() {
-        print("[SceneRenderer] Recovering from sleep — destroying and recreating context")
-        PerformanceMonitor.shared.logEvent("SceneRenderer: sleep recovery — recreating context")
-        stopDisplayLink()
-        if let ctx = context {
-            we_destroy_context(ctx)
-            context = nil
-        }
-        metalView?.removeFromSuperview()
-        metalView = nil
-        isPlaying = false
+        print("[SceneRenderer] Recovering from sleep — recreating native renderer")
+        PerformanceMonitor.shared.logEvent("SceneRenderer: sleep recovery — recreating native renderer")
+        // The replacement runtime starts fresh run IDs. Dispose its old sound
+        // realization too, so a completed run cannot terminate the new one.
+        stop()
         consecutiveZeroTextureFrames = 0
         needsRecovery = false
         play()
     }
 
-    func requestScreenshot(outputURL: URL, afterFrames: Int = 60, completion: @escaping (Result<Void, Error>) -> Void) {
+    func requestScreenshot(outputURL: URL, afterFrames: Int = 60, minimumSceneTime: TimeInterval = 0, completion: @escaping (Result<Void, Error>) -> Void) {
+        if let startupError {
+            completion(.failure(startupError))
+            return
+        }
         screenshotRequest = ScreenshotRequest(
             targetFrame: renderedFrameCount + max(afterFrames, 1),
+            minimumSceneTime: minimumSceneTime.isFinite ? max(minimumSceneTime, 0) : 0,
             outputURL: outputURL,
             completion: completion
         )
+        startAutomationClock()
     }
 
     func requestBenchmark(outputURL: URL, duration: TimeInterval = 5, completion: @escaping (Result<Void, Error>) -> Void) {
+        if let startupError {
+            completion(.failure(startupError))
+            return
+        }
         PerformanceMonitor.shared.resetFrameStatistics()
         benchmarkRequest = BenchmarkRequest(
             deadline: CACurrentMediaTime() + max(duration, 0.1),
             outputURL: outputURL,
             completion: completion
         )
+        startAutomationClock()
     }
 
     // MARK: - Private
 
-    private func setupMetalView(engineContext: WEContextRef) {
+    private func setupMetalView() {
         let mv = SceneMetalView(frame: view.bounds, device: device, commandQueue: commandQueue)
         mv.autoresizingMask = [.width, .height]
 
@@ -213,6 +310,7 @@ class SceneRenderer: WallpaperRenderer {
         view.addSubview(mv)
         mv.frame = view.bounds
 
+        mv.onFramePacket = { [weak self] packet in self?.reconcileSoundTransport(packet.soundTransports) }
         self.metalView = mv
     }
 
@@ -242,15 +340,22 @@ class SceneRenderer: WallpaperRenderer {
         guard let link else { return }
 
         lastRenderTime = CACurrentMediaTime()
+        displayLinkFrames.start()
 
         let renderer = Unmanaged.passUnretained(self)
         CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, userInfo) -> CVReturn in
             guard let userInfo else { return kCVReturnError }
             let renderer = Unmanaged<SceneRenderer>.fromOpaque(userInfo).takeUnretainedValue()
-            // Dispatch to the main actor — displayLinkFired() touches MTKView and
-            // NSView APIs that are @MainActor-isolated. At 30 fps the dispatch
-            // overhead (~1 µs) is well within budget.
-            DispatchQueue.main.async { renderer.displayLinkFired() }
+            let frames = renderer.displayLinkFrames
+            guard let ticket = frames.request() else { return kCVReturnSuccess }
+            // Slow wallpapers must not accumulate main-queue work on every
+            // refresh tick. Keep the slot until rendering finishes, and reject
+            // work queued before a pause, stop or switch to the capture clock.
+            DispatchQueue.main.async { [weak renderer] in
+                defer { frames.complete(ticket) }
+                guard frames.isCurrent(ticket) else { return }
+                renderer?.displayLinkFired()
+            }
             return kCVReturnSuccess
         }, renderer.toOpaque())
 
@@ -259,25 +364,64 @@ class SceneRenderer: WallpaperRenderer {
     }
 
     private func stopDisplayLink() {
+        displayLinkFrames.stop()
+        automationTimer?.invalidate()
+        automationTimer = nil
         guard let link = displayLink else { return }
         CVDisplayLinkStop(link)
         displayLink = nil
+    }
+
+    /// Capture jobs must continue when macOS suspends display refresh (for
+    /// example, while the monitor sleeps). They render into an offscreen
+    /// texture at the scene's authored resolution instead of requesting a
+    /// window drawable. Interactive playback retains its display link.
+    private func startAutomationClock() {
+        guard automationTimer == nil else { return }
+        stopDisplayLink()
+        lastRenderTime = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.displayLinkFired() }
+        }
+        automationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        print("[SceneRenderer] Automation uses offscreen rendering at the authored scene resolution")
     }
 
     private func displayLinkFired() {
         let now = CACurrentMediaTime()
         let elapsed = now - lastRenderTime
 
-        // Cap at 30fps
-        guard elapsed >= (1.0 / 30.0) else { return }
+        // Display links can run faster than 30 Hz. The automation timer is
+        // already capped, so small timer jitter must not discard every other frame.
+        guard automationTimer != nil || elapsed >= (1.0 / 30.0) else { return }
 
         let delta = elapsed
         lastRenderTime = now
 
-        guard let ctx = context, let mv = metalView else { return }
+        guard let mv = metalView else { return }
 
         let renderStart = CACurrentMediaTime()
-        let timing = mv.renderFrame(engineContext: ctx, deltaTime: delta)
+        let timing: SceneMetalView.FrameTiming
+        do {
+            guard let nativeRenderer else {
+                return
+            }
+            let projection = sceneDescription?.scene?.camera.projection
+            let automaticProjection = projection?.isAuto ?? true
+            let captureSize = automationTimer == nil ? nil : CGSize(
+                width: automaticProjection ? 1920 : max(projection?.width ?? 1920, 1),
+                height: automaticProjection ? 1080 : max(projection?.height ?? 1080, 1)
+            )
+            timing = try mv.renderFrame(nativeRenderer: nativeRenderer, deltaTime: delta, captureSize: captureSize)
+        } catch {
+            stopDisplayLink()
+            isPlaying = false
+            showError(error.localizedDescription)
+            failPendingAutomation(with: error)
+            print("[SceneRenderer] Render failure: \(error.localizedDescription)")
+            return
+        }
         let totalMs = (CACurrentMediaTime() - renderStart) * 1000.0
         renderedFrameCount += 1
 
@@ -303,18 +447,40 @@ class SceneRenderer: WallpaperRenderer {
             }
         }
 
-        if let request = screenshotRequest, renderedFrameCount >= request.targetFrame {
-            screenshotRequest = nil
-            do {
-                let report = try mv.capturePNG(to: request.outputURL)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                let reportData = try encoder.encode(report)
-                try reportData.write(to: request.outputURL.appendingPathExtension("json"))
-                PerformanceMonitor.shared.logEvent("Screenshot captured: \(request.outputURL.path)")
-                request.completion(.success(()))
-            } catch {
-                request.completion(.failure(error))
+        if let request = screenshotRequest, let sceneTime = timing.sceneTime,
+           renderedFrameCount >= request.targetFrame, sceneTime >= request.minimumSceneTime {
+            if animationReferenceTexture == nil {
+                // First trigger: remember this frame, then let playback advance
+                // so the capture can also measure animation motion.
+                animationReferenceTexture = mv.snapshotEngineTexture()
+                animationReferenceTime = sceneTime
+                screenshotRequest = ScreenshotRequest(
+                    targetFrame: renderedFrameCount + 24,
+                    minimumSceneTime: request.minimumSceneTime,
+                    outputURL: request.outputURL,
+                    completion: request.completion
+                )
+            } else {
+                screenshotRequest = nil
+                do {
+                    var report = try mv.capturePNG(to: request.outputURL)
+                    report.scene_elapsed_time = sceneTime
+                    report.rendered_frames = renderedFrameCount
+                    report.reference_scene_elapsed_time = animationReferenceTime
+                    if let reference = animationReferenceTexture {
+                        report.animation_delta = mv.animationDelta(against: reference)
+                    }
+                    animationReferenceTexture = nil
+                    animationReferenceTime = nil
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    let reportData = try encoder.encode(report)
+                    try reportData.write(to: request.outputURL.appendingPathExtension("json"))
+                    PerformanceMonitor.shared.logEvent("Screenshot captured: \(request.outputURL.path)")
+                    request.completion(.success(()))
+                } catch {
+                    request.completion(.failure(error))
+                }
             }
         }
 
@@ -333,16 +499,101 @@ class SceneRenderer: WallpaperRenderer {
             }
         }
     }
+
+    private func applyStoredProperties() {
+        if let nativeRenderer {
+            nativeRenderer.updatePropertyOverrides(makeNativePropertyOverrides())
+        }
+    }
+
+    private func makeNativePropertyOverrides() -> [String: FrameValue] {
+        var overrides: [String: FrameValue] = [:]
+        for (key, value) in propertyValues {
+            guard let property = propertyDefinitions[key] else {
+                continue
+            }
+            overrides[key] = Self.frameValue(for: property, value: value)
+        }
+        return overrides
+    }
+
+    private static func frameValue(for property: WallpaperProperty, value: String) -> FrameValue {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch property.type {
+        case .slider:
+            if let intValue = Int(trimmed), !trimmed.contains(".") {
+                return .int(intValue)
+            }
+            return .double(Double(trimmed) ?? 0)
+        case .bool:
+            return .bool(["1", "true", "yes", "on"].contains(trimmed.lowercased()))
+        case .color:
+            let normalized = WallpaperProperty.normalizeColorString(trimmed)
+            let components = normalized.split(whereSeparator: \.isWhitespace).compactMap { Double($0) }
+            return .vec3(Array(components.prefix(3)))
+        case .combo:
+            if let intValue = Int(trimmed) {
+                return .int(intValue)
+            }
+            if let doubleValue = Double(trimmed) {
+                return .double(doubleValue)
+            }
+            return .string(trimmed)
+        case .text, .textinput, .file, .scenetexture:
+            return .string(trimmed)
+        }
+    }
+
+    static func makeAudioState(from data: [Float]) -> AudioInputState {
+        guard !data.isEmpty else {
+            return .silent
+        }
+
+        let levels = data.count == 128 ? (0..<64).map { (data[$0] + data[$0 + 64]) * 0.5 } : data
+        func average(in range: Range<Int>) -> Double {
+            guard !range.isEmpty else { return 0 }
+            let clamped = range.clamped(to: 0..<levels.count)
+            guard !clamped.isEmpty else { return 0 }
+            let sum = clamped.reduce(0.0) { partial, index in
+                partial + Double(levels[index])
+            }
+            return sum / Double(clamped.count)
+        }
+
+        let count = levels.count
+        let quarter = max(count / 4, 1)
+        let half = max(count / 2, 1)
+        let threeQuarter = max((count * 3) / 4, 1)
+
+        return AudioInputState(
+            overall: average(in: 0..<count),
+            bass: average(in: 0..<quarter),
+            mid: average(in: quarter..<threeQuarter),
+            treble: average(in: half..<count),
+            spectrum: data
+        )
+    }
+
+    private func failPendingAutomation(with error: Error) {
+        if let request = screenshotRequest {
+            screenshotRequest = nil
+            request.completion(.failure(error))
+        }
+
+        if let request = benchmarkRequest {
+            benchmarkRequest = nil
+            request.completion(.failure(error))
+        }
+    }
+
 }
 
 // MARK: - SceneMetalView
 
-/// MTKView subclass that blits the engine's rendered MTLTexture to screen.
-///
-/// Each frame: calls `we_render_frame()` (engine commits its own command buffer with all
-/// scene render passes), then blits the resulting MTLTexture to the CAMetalLayer drawable
-/// via a simple fullscreen quad.
+/// MTKView subclass that blits the native renderer's `MTLTexture` to screen.
 private class SceneMetalView: MTKView {
+    var onFramePacket: ((FramePacket) -> Void)?
     private let commandQueue: MTLCommandQueue
     private var blitPipelineState: MTLRenderPipelineState?
     private var quadVertexBuffer: MTLBuffer?
@@ -350,11 +601,13 @@ private class SceneMetalView: MTKView {
     private var isSetup = false
     private var frameCount = 0
     private var lastEngineTexture: MTLTexture?
+    private var nativeRenderTarget: MTLTexture?
 
     struct FrameTiming {
         let gotTexture: Bool
         let engineMs: Double
         let blitMs: Double
+        var sceneTime: Double? = nil
     }
 
     init(frame: NSRect, device: MTLDevice, commandQueue: MTLCommandQueue) {
@@ -371,56 +624,54 @@ private class SceneMetalView: MTKView {
         fatalError("init(coder:) not implemented")
     }
 
-    func renderFrame(engineContext ctx: WEContextRef, deltaTime: Double) -> FrameTiming {
-        // Step 1: Engine renders all scene passes into its own MTLTextures and commits.
-        let engineStart = CACurrentMediaTime()
-        we_render_frame(ctx, deltaTime)
-        let engineMs = (CACurrentMediaTime() - engineStart) * 1000.0
-
-        // Step 2: Get the engine's output texture.
-        guard let texPtr = we_get_metal_texture(ctx) else {
-            frameCount += 1
-            return FrameTiming(gotTexture: false, engineMs: engineMs, blitMs: 0)
-        }
-
-        // texPtr is a non-owning borrow (retained by the engine's CFBO for the duration of play()).
-        let engineTex = Unmanaged<AnyObject>.fromOpaque(texPtr).takeUnretainedValue() as! MTLTexture
-        lastEngineTexture = engineTex
-
-        // Step 3: Set up the blit pipeline once.
+    func renderFrame(nativeRenderer renderer: NativeSceneRenderer, deltaTime: Double, captureSize: CGSize? = nil) throws -> FrameTiming {
         if !isSetup {
             setupBlitPipeline()
             isSetup = true
             print("[SceneMetalView] Blit pipeline set up")
         }
 
-        // Step 4: Blit engine texture → drawable.
-        let blitStart = CACurrentMediaTime()
-        guard let drawable = currentDrawable,
-              let rpd = currentRenderPassDescriptor,
-              let cmdBuf = commandQueue.makeCommandBuffer() else {
+        let drawable = captureSize == nil ? currentDrawable : nil
+        guard captureSize != nil || drawable != nil,
+              let cmdBuf = commandQueue.makeCommandBuffer(),
+              let renderTarget = makeNativeRenderTarget(
+                width: captureSize.map { Int($0.width) } ?? drawable!.texture.width,
+                height: captureSize.map { Int($0.height) } ?? drawable!.texture.height
+              ) else {
             frameCount += 1
-            return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: 0)
+            return FrameTiming(gotTexture: false, engineMs: 0, blitMs: 0)
         }
 
-        if let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd),
+        let engineStart = CACurrentMediaTime()
+        let packet = try renderer.renderNextFrame(deltaTime: deltaTime, into: renderTarget, commandBuffer: cmdBuf)
+        onFramePacket?(packet)
+        let engineMs = (CACurrentMediaTime() - engineStart) * 1000.0
+        lastEngineTexture = renderTarget
+
+        let blitStart = CACurrentMediaTime()
+        if drawable != nil, let rpd = currentRenderPassDescriptor,
+           let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd),
            let pso = blitPipelineState,
            let vb = quadVertexBuffer,
            let ss = samplerState {
             enc.setRenderPipelineState(pso)
-            enc.setFragmentTexture(engineTex, index: 0)
+            enc.setFragmentTexture(renderTarget, index: 0)
             enc.setFragmentSamplerState(ss, index: 0)
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             enc.endEncoding()
         }
 
-        cmdBuf.present(drawable)
+        if let drawable { cmdBuf.present(drawable) }
         cmdBuf.commit()
+        if captureSize != nil {
+            cmdBuf.waitUntilCompleted()
+            if let error = cmdBuf.error { throw error }
+        }
 
         let blitMs = (CACurrentMediaTime() - blitStart) * 1000.0
         frameCount += 1
-        return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: blitMs)
+        return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: blitMs, sceneTime: packet.timing.elapsedTime)
     }
 
     func capturePNG(to outputURL: URL) throws -> ScreenshotReport {
@@ -428,6 +679,38 @@ private class SceneMetalView: MTKView {
             throw TextureSnapshotError.imageCreationFailed
         }
         return try TextureSnapshot.writePNG(from: texture, using: commandQueue, to: outputURL)
+    }
+
+    /// Clones the current engine texture so a later frame can be diffed
+    /// against it for the animation-motion report.
+    func snapshotEngineTexture() -> MTLTexture? {
+        guard let source = lastEngineTexture, let device else {
+            return nil
+        }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: source.pixelFormat,
+            width: source.width,
+            height: source.height,
+            mipmapped: false
+        )
+        descriptor.usage = [.shaderRead]
+        guard let copy = device.makeTexture(descriptor: descriptor),
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder() else {
+            return nil
+        }
+        blit.copy(from: source, to: copy)
+        blit.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        return copy
+    }
+
+    func animationDelta(against earlier: MTLTexture) -> Double? {
+        guard let texture = lastEngineTexture else {
+            return nil
+        }
+        return TextureSnapshot.meanAbsoluteDifference(earlier, texture, using: commandQueue)
     }
 
     // swiftlint:disable:next function_body_length
@@ -496,5 +779,28 @@ private class SceneMetalView: MTKView {
         sampDesc.sAddressMode = .clampToEdge
         sampDesc.tAddressMode = .clampToEdge
         samplerState = device.makeSamplerState(descriptor: sampDesc)
+    }
+
+    private func makeNativeRenderTarget(width: Int, height: Int) -> MTLTexture? {
+        if let nativeRenderTarget,
+           nativeRenderTarget.width == width,
+           nativeRenderTarget.height == height {
+            return nativeRenderTarget
+        }
+
+        guard let device else {
+            return nil
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: max(width, 1),
+            height: max(height, 1),
+            mipmapped: false
+        )
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private
+        nativeRenderTarget = device.makeTexture(descriptor: descriptor)
+        return nativeRenderTarget
     }
 }

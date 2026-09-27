@@ -11,6 +11,7 @@ import AVFoundation
 /// - Seamless looping via AVPlayerLooper
 /// - Muted by default (wallpapers shouldn't play audio unexpectedly)
 /// - Fills the entire screen via VideoHostView layout
+@MainActor
 class VideoRenderer: WallpaperRenderer {
     let view: NSView
     private let player: AVQueuePlayer
@@ -53,13 +54,12 @@ class VideoRenderer: WallpaperRenderer {
         player.pause()
         looper?.disableLooping()
         looper = nil
+        player.removeAllItems()
+        playerLayer.player = nil
         playerLayer.removeFromSuperlayer()
         print("[VideoRenderer] Stopped")
     }
 
-    deinit {
-        stop()
-    }
 }
 
 /// NSView subclass that keeps an AVPlayerLayer sized to fill its bounds.

@@ -1,2 +1,0 @@
-/Library/Developer/CommandLineTools/usr/bin/ar qc libqjs.a CMakeFiles/qjs.dir/dtoa.c.o CMakeFiles/qjs.dir/libregexp.c.o CMakeFiles/qjs.dir/libunicode.c.o CMakeFiles/qjs.dir/quickjs.c.o
-/Library/Developer/CommandLineTools/usr/bin/ranlib libqjs.a

@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Manages the gallery window lifecycle, bridging SwiftUI into
 /// the AppKit-based menu bar app.
+@MainActor
 class GalleryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var viewModel: GalleryViewModel?

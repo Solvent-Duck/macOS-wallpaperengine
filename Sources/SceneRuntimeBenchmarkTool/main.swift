@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import NativeSceneBridge
+import NativeSceneCore
 import NativeSceneRuntime
 
 private struct RuntimeBenchmarkReport: Codable {
@@ -43,7 +44,17 @@ enum SceneRuntimeBenchmarkTool {
             assetsPath: configuration.assetsPath
         )
 
-        let runtime = SceneRuntime(scene: description)
+        let puppetModels = PuppetModelLibrary(assetRoots: description.extractedRoots + [
+            URL(fileURLWithPath: configuration.wallpaperPath), URL(fileURLWithPath: configuration.assetsPath),
+        ])
+        let textureAnimations = TextureAnimationLibrary(assetRoots: description.extractedRoots + [
+            URL(fileURLWithPath: configuration.wallpaperPath), URL(fileURLWithPath: configuration.assetsPath),
+        ])
+        let textLayouts = TextLayoutEngine(assetRoots: description.extractedRoots + [
+            URL(fileURLWithPath: configuration.wallpaperPath), URL(fileURLWithPath: configuration.assetsPath),
+        ])
+        let runtime = SceneRuntime(scene: description, puppetModels: puppetModels, textureAnimations: textureAnimations, textLayouts: textLayouts,
+            assetRoots: [URL(fileURLWithPath: configuration.wallpaperPath), URL(fileURLWithPath: configuration.assetsPath)] + description.extractedRoots)
         var packetSamples: [Double] = []
         var encodeSamples: [Double] = []
         var packetSizes: [Int] = []
