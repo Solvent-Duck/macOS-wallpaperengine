@@ -1,0 +1,39 @@
+{
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2835508488",
+      "name": "The Vast Cosmos [4K] COOLER EDITION",
+      "path": "2835508488",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "preset-scene",
+      "expected_features": [
+        "preset-properties"
+      ],
+      "expected_script_apis": [],
+      "expected_object_types": [],
+      "shader_includes": [],
+      "schema_version": 10,
+      "known_status": "partial",
+      "notes": "Published preset; dependency 2804885612. Authored user properties are applied; host-level preset options remain partial."
+    },
+    {
+      "id": "2984332953",
+      "name": "自用舒适",
+      "path": "2984332953",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "preset-scene",
+      "expected_features": [
+        "preset-properties"
+      ],
+      "expected_script_apis": [],
+      "expected_object_types": [],
+      "shader_includes": [],
+      "schema_version": 10,
+      "known_status": "partial",
+      "notes": "Published preset; dependency 2983846453. Authored user properties are applied; host-level preset options remain partial."
+    }
+  ]
+}

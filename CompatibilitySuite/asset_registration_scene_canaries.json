@@ -1,0 +1,15 @@
+{
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "3436945972",
+      "path": "3436945972",
+      "type": "scene"
+    },
+    {
+      "id": "3613126158",
+      "path": "3613126158",
+      "type": "scene"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "baseValue": {
+    "type": "vec3",
+    "value": [
+      1,
+      2,
+      3
+    ]
+  },
+  "properties": {
+    "offset": {
+      "type": "double",
+      "value": 4
+    }
+  },
+  "scriptSource": "'use strict';\nexport var scriptProperties = createScriptProperties().finish();\nexport function update(value) {\n  return { x: value.x + scriptProperties.offset, y: value.y, z: value.z - 1 };\n}\n"
+}

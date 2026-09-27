@@ -1,0 +1,232 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "1607915797",
+      "path": "1607915797",
+      "type": "video"
+    },
+    {
+      "id": "1661379435",
+      "path": "1661379435",
+      "type": "video"
+    },
+    {
+      "id": "1661380704",
+      "path": "1661380704",
+      "type": "video"
+    },
+    {
+      "id": "2614505463",
+      "path": "2614505463",
+      "type": "video"
+    },
+    {
+      "id": "2674997742",
+      "path": "2674997742",
+      "type": "video"
+    },
+    {
+      "id": "2712079620",
+      "path": "2712079620",
+      "type": "video"
+    },
+    {
+      "id": "2783765808",
+      "path": "2783765808",
+      "type": "video"
+    },
+    {
+      "id": "2835525400",
+      "path": "2835525400",
+      "type": "video"
+    },
+    {
+      "id": "2837025988",
+      "path": "2837025988",
+      "type": "video"
+    },
+    {
+      "id": "2837441038",
+      "path": "2837441038",
+      "type": "video"
+    },
+    {
+      "id": "2837598987",
+      "path": "2837598987",
+      "type": "video"
+    },
+    {
+      "id": "2837777069",
+      "path": "2837777069",
+      "type": "video"
+    },
+    {
+      "id": "2837838497",
+      "path": "2837838497",
+      "type": "video"
+    },
+    {
+      "id": "2855366660",
+      "path": "2855366660",
+      "type": "video"
+    },
+    {
+      "id": "2858284176",
+      "path": "2858284176",
+      "type": "video"
+    },
+    {
+      "id": "2913091682",
+      "path": "2913091682",
+      "type": "video"
+    },
+    {
+      "id": "2970301388",
+      "path": "2970301388",
+      "type": "video"
+    },
+    {
+      "id": "2992592299",
+      "path": "2992592299",
+      "type": "video"
+    },
+    {
+      "id": "3010940409",
+      "path": "3010940409",
+      "type": "video"
+    },
+    {
+      "id": "3013189498",
+      "path": "3013189498",
+      "type": "video"
+    },
+    {
+      "id": "3045984904",
+      "path": "3045984904",
+      "type": "video"
+    },
+    {
+      "id": "3103541488",
+      "path": "3103541488",
+      "type": "video"
+    },
+    {
+      "id": "3136131049",
+      "path": "3136131049",
+      "type": "video"
+    },
+    {
+      "id": "3272717573",
+      "path": "3272717573",
+      "type": "video"
+    },
+    {
+      "id": "3276949571",
+      "path": "3276949571",
+      "type": "video"
+    },
+    {
+      "id": "3297934362",
+      "path": "3297934362",
+      "type": "video"
+    },
+    {
+      "id": "3314492008",
+      "path": "3314492008",
+      "type": "video"
+    },
+    {
+      "id": "3336571356",
+      "path": "3336571356",
+      "type": "video"
+    },
+    {
+      "id": "3359379448",
+      "path": "3359379448",
+      "type": "video"
+    },
+    {
+      "id": "3387794230",
+      "path": "3387794230",
+      "type": "video"
+    },
+    {
+      "id": "3387802936",
+      "path": "3387802936",
+      "type": "video"
+    },
+    {
+      "id": "3397638941",
+      "path": "3397638941",
+      "type": "video"
+    },
+    {
+      "id": "3397648902",
+      "path": "3397648902",
+      "type": "video"
+    },
+    {
+      "id": "3397701756",
+      "path": "3397701756",
+      "type": "video"
+    },
+    {
+      "id": "3422072291",
+      "path": "3422072291",
+      "type": "video"
+    },
+    {
+      "id": "3427546153",
+      "path": "3427546153",
+      "type": "video"
+    },
+    {
+      "id": "3433165867",
+      "path": "3433165867",
+      "type": "video"
+    },
+    {
+      "id": "3435963676",
+      "path": "3435963676",
+      "type": "video"
+    },
+    {
+      "id": "3441187616",
+      "path": "3441187616",
+      "type": "video"
+    },
+    {
+      "id": "3443043787",
+      "path": "3443043787",
+      "type": "video"
+    },
+    {
+      "id": "3445796221",
+      "path": "3445796221",
+      "type": "video"
+    },
+    {
+      "id": "3445801440",
+      "path": "3445801440",
+      "type": "video"
+    },
+    {
+      "id": "3492954862",
+      "path": "3492954862",
+      "type": "video"
+    },
+    {
+      "id": "3563727924",
+      "path": "3563727924",
+      "type": "video"
+    },
+    {
+      "id": "3569666709",
+      "path": "3569666709",
+      "type": "video"
+    }
+  ],
+  "notes": "All 45 eligible local video wallpapers. Decode evidence is separate from app playback, audio, looping, controls, and Windows visual parity. Preserve DEVELOPMENT_PROCEDURE exclusions."
+}

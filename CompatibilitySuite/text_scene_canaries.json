@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-04-04T00:00:00Z",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2232968607",
+      "name": "天空之镜 4K",
+      "path": "2232968607",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "text-canary",
+      "expected_features": [],
+      "expected_script_apis": [],
+      "expected_object_types": [],
+      "shader_includes": [],
+      "schema_version": 10,
+      "known_status": "pass",
+      "notes": "Simple real scene with one image object and three scripted text objects. Native scene decoding succeeds after Phase 7 parsing work; keep as a real text-bearing canary."
+    },
+    {
+      "id": "3368256253",
+      "name": "Shimmering Pond | きらめく池",
+      "path": "3368256253",
+      "preview_path": "preview.gif",
+      "type": "scene",
+      "category": "text-canary",
+      "expected_features": [],
+      "expected_script_apis": [],
+      "expected_object_types": [],
+      "shader_includes": [],
+      "schema_version": 0,
+      "known_status": "pass",
+      "notes": "Mixed text + particle scene. Keep as a native canary with known particle placeholders so text parsing does not regress while broader particle parity remains out of scope."
+    },
+    {
+      "id": "3098403977",
+      "name": "HUD 02 | cursor tracker + world clock [4K]",
+      "path": "3098403977",
+      "preview_path": "preview.jpg",
+      "type": "scene",
+      "category": "text-canary",
+      "expected_features": [],
+      "expected_script_apis": [],
+      "expected_object_types": [],
+      "shader_includes": [],
+      "schema_version": 0,
+      "known_status": "pass",
+      "notes": "Text-heavy real HUD scene with 21 text objects and 22 image objects. Use as a native text corpus canary while broader image/material parity remains partial."
+    }
+  ]
+}

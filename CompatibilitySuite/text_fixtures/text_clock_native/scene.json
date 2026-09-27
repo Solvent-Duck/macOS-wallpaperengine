@@ -1,0 +1,130 @@
+{
+  "camera": {
+    "center": "0.00000 0.00000 -1.00000",
+    "eye": "0.00000 0.00000 0.00000",
+    "up": "0.00000 1.00000 0.00000"
+  },
+  "general": {
+    "ambientcolor": "0.30000 0.30000 0.30000",
+    "bloom": false,
+    "clearcolor": "0.04000 0.05000 0.09000",
+    "norecompile": true,
+    "orthogonalprojection": {
+      "height": 1080,
+      "width": 1920
+    },
+    "skylightcolor": "0.30000 0.30000 0.30000"
+  },
+  "objects": [
+    {
+      "alpha": 1.0,
+      "anchor": "none",
+      "backgroundbrightness": 1.0,
+      "backgroundcolor": "0.00000 0.00000 0.00000",
+      "blockalign": false,
+      "castshadow": true,
+      "color": {
+        "user": "accent",
+        "value": "0.90000 0.95000 1.00000"
+      },
+      "depthtest": "enabled",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "horizontalalign": "center",
+      "id": 1,
+      "limitrows": false,
+      "limituseellipsis": false,
+      "limitwidth": false,
+      "locktransforms": true,
+      "maxrows": 1,
+      "maxwidth": 1400.0,
+      "name": "Header",
+      "opaquebackground": false,
+      "origin": "960.00000 850.00000 0.00000",
+      "padding": 16,
+      "parallaxDepth": "0.00000 0.00000",
+      "pointsize": 23.04,
+      "size": "1400.00000 180.00000",
+      "text": {
+        "value": "Phase 7 Native Text"
+      },
+      "verticalalign": "center",
+      "visible": true
+    },
+    {
+      "alpha": 1.0,
+      "anchor": "none",
+      "backgroundbrightness": 1.0,
+      "backgroundcolor": "0.00000 0.00000 0.00000",
+      "blockalign": false,
+      "castshadow": false,
+      "color": {
+        "user": "accent",
+        "value": "0.90000 0.95000 1.00000"
+      },
+      "depthtest": "enabled",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "horizontalalign": "center",
+      "id": 2,
+      "limitrows": false,
+      "limituseellipsis": false,
+      "limitwidth": false,
+      "locktransforms": true,
+      "maxrows": 1,
+      "maxwidth": 800.0,
+      "name": "Clock",
+      "opaquebackground": false,
+      "origin": "960.00000 540.00000 0.00000",
+      "padding": 24,
+      "parallaxDepth": "0.00000 0.00000",
+      "pointsize": 29.76,
+      "size": "900.00000 220.00000",
+      "text": {
+        "script": "'use strict';\nexport var scriptProperties = createScriptProperties()\n\t.addText({\n\t\tname: 'delimiter',\n\t\tlabel: 'Delimiter',\n\t\tvalue: ':'\n\t})\n\t.finish();\nexport function update(value) {\n\tlet now = new Date();\n\tlet hours = ('00' + now.getHours()).slice(-2);\n\tlet minutes = ('00' + now.getMinutes()).slice(-2);\n\treturn hours + scriptProperties.delimiter + minutes;\n}\n",
+        "scriptproperties": {
+          "delimiter": ":"
+        },
+        "value": "00:00"
+      },
+      "verticalalign": "center",
+      "visible": true
+    },
+    {
+      "alpha": 0.9,
+      "anchor": "none",
+      "backgroundbrightness": 1.0,
+      "backgroundcolor": "0.00000 0.00000 0.00000",
+      "blockalign": false,
+      "castshadow": false,
+      "color": {
+        "user": "accent",
+        "value": "0.90000 0.95000 1.00000"
+      },
+      "depthtest": "enabled",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "horizontalalign": "center",
+      "id": 3,
+      "limitrows": false,
+      "limituseellipsis": true,
+      "limitwidth": true,
+      "locktransforms": true,
+      "maxrows": 1,
+      "maxwidth": 1200.0,
+      "name": "Subtitle",
+      "opaquebackground": false,
+      "origin": "960.00000 220.00000 0.00000",
+      "padding": 12,
+      "parallaxDepth": "0.00000 0.00000",
+      "pointsize": 10.56,
+      "size": "1300.00000 120.00000",
+      "text": {
+        "user": "subtitle",
+        "value": "Derived from real Wallpaper Engine text objects"
+      },
+      "verticalalign": "center",
+      "visible": {
+        "user": "showSubtitle",
+        "value": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-04-04T00:20:00Z",
+  "corpus_root": "text_fixtures",
+  "fixtures": [
+    {
+      "id": "text_clock_native",
+      "name": "Text Clock Native",
+      "path": "text_clock_native",
+      "type": "scene",
+      "category": "text-native",
+      "expected_features": [
+        "text",
+        "script"
+      ],
+      "expected_script_apis": [
+        "update(value)"
+      ],
+      "expected_object_types": [
+        "text"
+      ],
+      "shader_includes": [],
+      "schema_version": 1,
+      "known_status": "pass",
+      "notes": "Deterministic native text fixture derived from real workshop text-object schema and Clock/Date script patterns."
+    }
+  ]
+}

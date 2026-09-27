@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-07-16",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2837837781",
+      "path": "2837837781",
+      "type": "scene"
+    },
+    {
+      "id": "3017800550",
+      "path": "3017800550",
+      "type": "scene"
+    },
+    {
+      "id": "3090264289",
+      "path": "3090264289",
+      "type": "scene"
+    },
+    {
+      "id": "2915844448",
+      "path": "2915844448",
+      "type": "scene"
+    }
+  ]
+}

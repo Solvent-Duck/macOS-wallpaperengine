@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "3061226599",
+      "path": "3061226599",
+      "type": "scene",
+      "category": "direct-model-canary",
+      "known_status": "partial",
+      "notes": "Four static MDLV0019 shard meshes in a 2D composition; keep 3d-models partial until effects and visual fidelity are verified."
+    },
+    {
+      "id": "3229704729",
+      "path": "3229704729",
+      "type": "scene",
+      "category": "direct-model-canary",
+      "known_status": "partial",
+      "notes": "MDLV0021 grass/coral, five skinned sharks and a four-material boat. Verify mixed orthographic/perspective layers. Scene reflection mipmaps are bound; water composition, particle/attachment scripts and full visual fidelity remain gaps."
+    },
+    {
+      "id": "3354366708",
+      "path": "3354366708",
+      "type": "scene",
+      "category": "direct-model-canary",
+      "known_status": "partial",
+      "notes": "MDLV0023 ring meshes alongside puppet layers. Keep 3d-models partial; camera, effects, lighting and visual fidelity are unverified."
+    }
+  ]
+}

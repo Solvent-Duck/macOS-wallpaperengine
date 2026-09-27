@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2837837781",
+      "path": "2837837781",
+      "type": "scene"
+    },
+    {
+      "id": "2983846453",
+      "path": "2983846453",
+      "type": "scene"
+    },
+    {
+      "id": "3061226599",
+      "path": "3061226599",
+      "type": "scene"
+    },
+    {
+      "id": "3114332546",
+      "path": "3114332546",
+      "type": "scene"
+    },
+    {
+      "id": "3409595232",
+      "path": "3409595232",
+      "type": "scene"
+    },
+    {
+      "id": "3414858021",
+      "path": "3414858021",
+      "type": "scene"
+    },
+    {
+      "id": "3229704729",
+      "path": "3229704729",
+      "type": "scene"
+    },
+    {
+      "id": "3389385059",
+      "path": "3389385059",
+      "type": "scene"
+    },
+    {
+      "id": "3129087373",
+      "path": "3129087373",
+      "type": "scene",
+      "name": "Lofi Girl (Day/Night)",
+      "notes": "Wider fragment varying than its vertex producer caused an invalid float4/float2 Metal assignment and a skipped topographic layer."
+    }
+  ],
+  "notes": "Real shader regressions: local runtime const, compound vector truncation, optional normal-map definedness, authored logarithm helpers, conditional terminators, continued expressions, sampler helper macros, scalar broadcasts, and inactive empty helpers. Preserve the exclusions in DEVELOPMENT_PROCEDURE.md."
+}

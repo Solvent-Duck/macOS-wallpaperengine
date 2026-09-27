@@ -1,0 +1,8 @@
+{
+  "baseValue": {
+    "type": "double",
+    "value": 1
+  },
+  "properties": {},
+  "scriptSource": "'use strict';\nexport var scriptProperties = createScriptProperties()\n  .addSlider({ name: 'amount', value: 0.25 })\n  .finish();\nexport function update(value) {\n  return value + scriptProperties.amount;\n}\n"
+}

@@ -1,0 +1,515 @@
+{
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2961625527",
+      "path": "2961625527",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "2967122654",
+      "path": "2967122654",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "2985176432",
+      "path": "2985176432",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3017671148",
+      "path": "3017671148",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3017800550",
+      "path": "3017800550",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3024069085",
+      "path": "3024069085",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3042793806",
+      "path": "3042793806",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3074485715",
+      "path": "3074485715",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3098403977",
+      "path": "3098403977",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3112229631",
+      "path": "3112229631",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3163060610",
+      "path": "3163060610",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3163333989",
+      "path": "3163333989",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3228578419",
+      "path": "3228578419",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3244210640",
+      "path": "3244210640",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3259570143",
+      "path": "3259570143",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3262234969",
+      "path": "3262234969",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3264251271",
+      "path": "3264251271",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3274388425",
+      "path": "3274388425",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3293017408",
+      "path": "3293017408",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3302772435",
+      "path": "3302772435",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3311420365",
+      "path": "3311420365",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3313849290",
+      "path": "3313849290",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3319542538",
+      "path": "3319542538",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3323674297",
+      "path": "3323674297",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3324805657",
+      "path": "3324805657",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3326873240",
+      "path": "3326873240",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3329852387",
+      "path": "3329852387",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3341047064",
+      "path": "3341047064",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3342443460",
+      "path": "3342443460",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3344701858",
+      "path": "3344701858",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3347416586",
+      "path": "3347416586",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3350768236",
+      "path": "3350768236",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3352465485",
+      "path": "3352465485",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3355291946",
+      "path": "3355291946",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3360569178",
+      "path": "3360569178",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3362626308",
+      "path": "3362626308",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3366666785",
+      "path": "3366666785",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3367836416",
+      "path": "3367836416",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3373769423",
+      "path": "3373769423",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3375885250",
+      "path": "3375885250",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3382968509",
+      "path": "3382968509",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3384382096",
+      "path": "3384382096",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3385540784",
+      "path": "3385540784",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3387745444",
+      "path": "3387745444",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3389300833",
+      "path": "3389300833",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3389385059",
+      "path": "3389385059",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3392206747",
+      "path": "3392206747",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3400241651",
+      "path": "3400241651",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3400879974",
+      "path": "3400879974",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3402520845",
+      "path": "3402520845",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3404476532",
+      "path": "3404476532",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3406760593",
+      "path": "3406760593",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3409595232",
+      "path": "3409595232",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3415190399",
+      "path": "3415190399",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3417957645",
+      "path": "3417957645",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3419525469",
+      "path": "3419525469",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3422875812",
+      "path": "3422875812",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3426865175",
+      "path": "3426865175",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3429159295",
+      "path": "3429159295",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3435049131",
+      "path": "3435049131",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3439745927",
+      "path": "3439745927",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3441873795",
+      "path": "3441873795",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3442135827",
+      "path": "3442135827",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3446385861",
+      "path": "3446385861",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3448848352",
+      "path": "3448848352",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3448858509",
+      "path": "3448858509",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3451125409",
+      "path": "3451125409",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3452865579",
+      "path": "3452865579",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3463644891",
+      "path": "3463644891",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3468493655",
+      "path": "3468493655",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3475835381",
+      "path": "3475835381",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3481071594",
+      "path": "3481071594",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3494637950",
+      "path": "3494637950",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3497488774",
+      "path": "3497488774",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3498185307",
+      "path": "3498185307",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3510729512",
+      "path": "3510729512",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3515745440",
+      "path": "3515745440",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3516106265",
+      "path": "3516106265",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3522567333",
+      "path": "3522567333",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3534201748",
+      "path": "3534201748",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3550590706",
+      "path": "3550590706",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3573378561",
+      "path": "3573378561",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3583954054",
+      "path": "3583954054",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3592541966",
+      "path": "3592541966",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    },
+    {
+      "id": "3613126158",
+      "path": "3613126158",
+      "type": "scene",
+      "notes": "Per-image material instance overrides"
+    }
+  ]
+}

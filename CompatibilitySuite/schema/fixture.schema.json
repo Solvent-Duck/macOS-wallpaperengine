@@ -133,6 +133,11 @@
         },
         "notes": {
           "type": "string"
+        },
+        "screenshot_time": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum elapsed scene seconds before capturing the animation reference; the screenshot follows 24 frames later. Use for authored intros."
         }
       },
       "additionalProperties": false

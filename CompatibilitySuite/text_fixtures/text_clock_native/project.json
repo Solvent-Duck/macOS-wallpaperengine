@@ -1,0 +1,28 @@
+{
+  "file": "scene.json",
+  "general": {
+    "properties": {
+      "accent": {
+        "order": 1,
+        "text": "Accent",
+        "type": "color",
+        "value": "0.90000 0.95000 1.00000"
+      },
+      "subtitle": {
+        "order": 2,
+        "text": "Subtitle",
+        "type": "textinput",
+        "value": "Derived from real Wallpaper Engine text objects"
+      },
+      "showSubtitle": {
+        "order": 3,
+        "text": "Show Subtitle",
+        "type": "bool",
+        "value": true
+      }
+    }
+  },
+  "title": "Text Clock Native",
+  "type": "scene",
+  "visibility": "private"
+}

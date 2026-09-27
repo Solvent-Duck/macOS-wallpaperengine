@@ -1,0 +1,281 @@
+{
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2299511718",
+      "path": "2299511718",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "2804885612",
+      "path": "2804885612",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "2836907044",
+      "path": "2836907044",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "2952281182",
+      "path": "2952281182",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "2986368907",
+      "path": "2986368907",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "2986706471",
+      "path": "2986706471",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "2986897394",
+      "path": "2986897394",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.03"
+    },
+    {
+      "id": "2987367161",
+      "path": "2987367161",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "2990133618",
+      "path": "2990133618",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3017671148",
+      "path": "3017671148",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3024069085",
+      "path": "3024069085",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3028787000",
+      "path": "3028787000",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3041448036",
+      "path": "3041448036",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3044754751",
+      "path": "3044754751",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3089647023",
+      "path": "3089647023",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3135623422",
+      "path": "3135623422",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3163333989",
+      "path": "3163333989",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3202712214",
+      "path": "3202712214",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.05"
+    },
+    {
+      "id": "3244210640",
+      "path": "3244210640",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.04"
+    },
+    {
+      "id": "3254133458",
+      "path": "3254133458",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3259570143",
+      "path": "3259570143",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.04"
+    },
+    {
+      "id": "3272162526",
+      "path": "3272162526",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3272268035",
+      "path": "3272268035",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3293017408",
+      "path": "3293017408",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3311420365",
+      "path": "3311420365",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.05"
+    },
+    {
+      "id": "3313849290",
+      "path": "3313849290",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.05"
+    },
+    {
+      "id": "3319542538",
+      "path": "3319542538",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3324805657",
+      "path": "3324805657",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3329852387",
+      "path": "3329852387",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.04"
+    },
+    {
+      "id": "3335365971",
+      "path": "3335365971",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3341047064",
+      "path": "3341047064",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.03"
+    },
+    {
+      "id": "3344701858",
+      "path": "3344701858",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.04"
+    },
+    {
+      "id": "3352465485",
+      "path": "3352465485",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.03"
+    },
+    {
+      "id": "3360569178",
+      "path": "3360569178",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.04"
+    },
+    {
+      "id": "3362626308",
+      "path": "3362626308",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.02"
+    },
+    {
+      "id": "3371714429",
+      "path": "3371714429",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3389385059",
+      "path": "3389385059",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.0700001"
+    },
+    {
+      "id": "3392206747",
+      "path": "3392206747",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3393866367",
+      "path": "3393866367",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3435049131",
+      "path": "3435049131",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.01"
+    },
+    {
+      "id": "3435052820",
+      "path": "3435052820",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3438420195",
+      "path": "3438420195",
+      "type": "scene",
+      "notes": "Authored general.zoom: bound setting"
+    },
+    {
+      "id": "3448848352",
+      "path": "3448848352",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.03"
+    },
+    {
+      "id": "3475835381",
+      "path": "3475835381",
+      "type": "scene",
+      "notes": "Authored general.zoom: 0.80000001"
+    },
+    {
+      "id": "3503882817",
+      "path": "3503882817",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.05"
+    },
+    {
+      "id": "3603712208",
+      "path": "3603712208",
+      "type": "scene",
+      "notes": "Authored general.zoom: 1.006"
+    }
+  ]
+}

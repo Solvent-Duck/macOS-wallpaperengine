@@ -1,0 +1,6 @@
+{
+  "shaderPath": "effects/varying_mutation",
+  "combos": {
+    "GMODE": 1
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "3494637950",
+      "path": "3494637950",
+      "type": "scene"
+    },
+    {
+      "id": "3564529588",
+      "path": "3564529588",
+      "type": "scene"
+    },
+    {
+      "id": "3568612476",
+      "path": "3568612476",
+      "type": "scene"
+    },
+    {
+      "id": "3592541966",
+      "path": "3592541966",
+      "type": "scene"
+    },
+    {
+      "id": "3603712208",
+      "path": "3603712208",
+      "type": "scene"
+    }
+  ],
+  "selection": "Local scenes previously gated by boids, remapvalue, or collisionquad; excludes the four user-designated non-testing wallpapers."
+}

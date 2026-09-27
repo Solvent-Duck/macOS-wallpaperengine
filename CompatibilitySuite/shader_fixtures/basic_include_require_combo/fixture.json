@@ -1,0 +1,9 @@
+{
+  "shaderPath": "effects/basic",
+  "combos": {
+    "GMODE": 2
+  },
+  "overrideCombos": {
+    "AA_CATEGORY": 1
+  }
+}

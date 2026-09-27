@@ -1,0 +1,207 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2956974370",
+      "path": "2956974370",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "2961625527",
+      "path": "2961625527",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: point. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3042793806",
+      "path": "3042793806",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3061226599",
+      "path": "3061226599",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "partial",
+      "notes": "Authored light types: ldirectional. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3119139541",
+      "path": "3119139541",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3162163215",
+      "path": "3162163215",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint. Visual lighting fidelity requires review beyond nonblack captures. Authored intro keeps brightness near -1 for five seconds and fades to 0 at six seconds; capture after seven scene seconds.",
+      "screenshot_time": 7
+    },
+    {
+      "id": "3164143058",
+      "path": "3164143058",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ldirectional. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3178494590",
+      "path": "3178494590",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, lspot. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3198529509",
+      "path": "3198529509",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ldirectional, lpoint, lspot. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3202712214",
+      "path": "3202712214",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3217188597",
+      "path": "3217188597",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3229704729",
+      "path": "3229704729",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "partial",
+      "notes": "Authored light types: ldirectional. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3262234969",
+      "path": "3262234969",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3280624646",
+      "path": "3280624646",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ldirectional, lpoint, lspot, ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3293017408",
+      "path": "3293017408",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3323674297",
+      "path": "3323674297",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3335365971",
+      "path": "3335365971",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3371714429",
+      "path": "3371714429",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3385429182",
+      "path": "3385429182",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3416122407",
+      "path": "3416122407",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, lspot. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3437611266",
+      "path": "3437611266",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, lspot, ltube. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3463650326",
+      "path": "3463650326",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, lspot. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3554906812",
+      "path": "3554906812",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint, lspot. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3555174531",
+      "path": "3555174531",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lspot. Visual lighting fidelity requires review beyond nonblack captures."
+    },
+    {
+      "id": "3560755188",
+      "path": "3560755188",
+      "type": "scene",
+      "category": "scene-lighting-canary",
+      "known_status": "pass",
+      "notes": "Authored light types: lpoint. Visual lighting fidelity requires review beyond nonblack captures."
+    }
+  ]
+}

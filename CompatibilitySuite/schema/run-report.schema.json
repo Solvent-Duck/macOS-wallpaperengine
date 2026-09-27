@@ -6,6 +6,7 @@
   "required": [
     "run_id",
     "generated_at",
+    "runtime_mode",
     "fixture_reports"
   ],
   "properties": {
@@ -15,6 +16,9 @@
     "generated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "runtime_mode": {
+      "const": "native"
     },
     "fixture_reports": {
       "type": "array",
@@ -44,7 +48,8 @@
             "pass",
             "partial",
             "fail",
-            "crash"
+            "crash",
+            "timeout"
           ]
         },
         "launch_ok": {
@@ -79,6 +84,34 @@
             "string",
             "null"
           ]
+        },
+        "compatibility_status": {
+          "enum": [
+            "issues_detected",
+            "unverified"
+          ]
+        },
+        "windows_parity_verified": {
+          "type": "boolean",
+          "description": "Frame capture and static support checks cannot establish Windows equivalence."
+        },
+        "script_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "renderer_fallbacks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": true

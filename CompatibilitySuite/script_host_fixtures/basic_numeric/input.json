@@ -1,0 +1,13 @@
+{
+  "baseValue": {
+    "type": "double",
+    "value": 2
+  },
+  "properties": {
+    "gain": {
+      "type": "double",
+      "value": 0.5
+    }
+  },
+  "scriptSource": "'use strict';\nexport var scriptProperties = createScriptProperties().finish();\nexport function update(value) {\n  return value + scriptProperties.gain;\n}\n"
+}

@@ -1,0 +1,22 @@
+{
+  "discoveredCombos": {},
+  "fragmentGLSL": "#version 330\n// ======================================================\n// Processed shader effects/varying_mutation\n// ======================================================\nprecision highp float;\n#define mul(x, y) ((y) * (x))\n#define max(x, y) max (y, x)\n#define lerp mix\n#define frac fract\n#define CASTU(x) (uint(x))\n#define CAST2(x) (vec2(x))\n#define CAST3(x) (vec3(x))\n#define CAST4(x) (vec4(x))\n#define CAST3X3(x) (mat3(x))\n#define saturate(x) (clamp(x, 0.0, 1.0))\n#define texSample2D texture\n#define texSample2DLod textureLod\n#define DECLARE_SAMPLER2D_PARAMETER(name) sampler2D name\n#define MAKE_SAMPLER2D_ARGUMENT(name) name\n#define log10(x) log2(x) * 0.301029995663981\n#define atan2 atan\n#define fmod(x, y) ((x)-(y)*trunc((x)/(y)))\n#define ddx dFdx\n#define ddy(x) dFdy(-(x))\n#define GLSL 1\n#define float2 vec2\n#define float3 vec3\n#define float4 vec4\n#define half2 vec2\n#define half3 vec3\n#define half4 vec4\n#define float3x3 mat3\n#define float4x4 mat4\n#define float2x2 mat2\n#define gl_FragColor out_FragColor\nout vec4 out_FragColor;\n#define varying in\n#define GMODE 1\nvarying vec3 v_Color;\n#if GMODE == 1\nvec3 tone(vec3 color) {\n    return color;\n}\n\nvoid main() {\n    vec3 _we_mut_v_Color = v_Color;\n#define v_Color _we_mut_v_Color\n\n    v_Color = tone(v_Color);\n    out_FragColor = vec4(v_Color, 1.0);\n}\n\n#endif",
+  "metal": {
+    "fragmentMSL": "#pragma clang diagnostic ignored \"-Wmissing-prototypes\"\n\n#include <metal_stdlib>\n#include <simd/simd.h>\n\nusing namespace metal;\n\nstruct main0_out\n{\n    float4 out_FragColor;\n};\n\nstruct main0_in\n{\n    float3 v_Color;\n};\n\nstatic inline __attribute__((always_inline))\nfloat3 tone(thread const float3& color)\n{\n    return color;\n}\n\nfragment main0_out main0(main0_in in [[stage_in]])\n{\n    main0_out out = {};\n    float3 _we_mut_v_Color = in.v_Color;\n    float3 param = _we_mut_v_Color;\n    _we_mut_v_Color = tone(param);\n    out.out_FragColor = float4(_we_mut_v_Color, 1.0);\n    return out;\n}\n\n",
+    "fragmentSamplerSlots": {},
+    "fragmentTextureSlots": {},
+    "fragmentUniformSlots": {},
+    "vertexAttributes": [
+      {
+        "bufferIndex": 30,
+        "location": 0,
+        "name": "a_Position",
+        "vecSize": 3
+      }
+    ],
+    "vertexMSL": "#include <metal_stdlib>\n#include <simd/simd.h>\n\nusing namespace metal;\n\nstruct main0_out\n{\n    float3 v_Color;\n    float4 gl_Position [[position]];\n};\n\nstruct main0_in\n{\n    float3 a_Position [[attribute(0)]];\n};\n\nvertex main0_out main0(main0_in in [[stage_in]])\n{\n    main0_out out = {};\n    out.v_Color = (in.a_Position * 0.5) + float3(0.5);\n    out.gl_Position = float4(in.a_Position, 1.0);\n    return out;\n}\n\n",
+    "vertexUniformSlots": {}
+  },
+  "shaderPath": "effects/varying_mutation",
+  "vertexGLSL": "#version 330\n// ======================================================\n// Processed shader effects/varying_mutation\n// ======================================================\nprecision highp float;\n#define mul(x, y) ((y) * (x))\n#define max(x, y) max (y, x)\n#define lerp mix\n#define frac fract\n#define CASTU(x) (uint(x))\n#define CAST2(x) (vec2(x))\n#define CAST3(x) (vec3(x))\n#define CAST4(x) (vec4(x))\n#define CAST3X3(x) (mat3(x))\n#define saturate(x) (clamp(x, 0.0, 1.0))\n#define texSample2D texture\n#define texSample2DLod textureLod\n#define DECLARE_SAMPLER2D_PARAMETER(name) sampler2D name\n#define MAKE_SAMPLER2D_ARGUMENT(name) name\n#define log10(x) log2(x) * 0.301029995663981\n#define atan2 atan\n#define fmod(x, y) ((x)-(y)*trunc((x)/(y)))\n#define ddx dFdx\n#define ddy(x) dFdy(-(x))\n#define GLSL 1\n#define float2 vec2\n#define float3 vec3\n#define float4 vec4\n#define half2 vec2\n#define half3 vec3\n#define half4 vec4\n#define float3x3 mat3\n#define float4x4 mat4\n#define float2x2 mat2\n#define attribute in\n#define varying out\n#define GMODE 1\nattribute vec3 a_Position;\nvarying vec3 v_Color;\n\nvoid main() {\n    v_Color = a_Position * 0.5 + vec3(0.5);\n    gl_Position = vec4(a_Position, 1.0);\n}\n"
+}

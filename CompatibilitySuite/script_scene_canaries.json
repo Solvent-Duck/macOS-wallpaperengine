@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "3436945972",
+      "path": "3436945972",
+      "type": "scene"
+    },
+    {
+      "id": "3462487934",
+      "path": "3462487934",
+      "type": "scene"
+    },
+    {
+      "id": "3613126158",
+      "path": "3613126158",
+      "type": "scene"
+    },
+    {
+      "id": "3042793806",
+      "path": "3042793806",
+      "type": "scene"
+    },
+    {
+      "id": "3497488774",
+      "path": "3497488774",
+      "type": "scene"
+    }
+  ],
+  "notes": "SceneScript regressions: mapped-arguments GC with auto_sway shaders, a full-corpus timeout, layer/group/day-night bindings, and authored locals shadowing host initialization, plus the heavy shared-library/Vec4/lifecycle scene. Preserve the exclusions in DEVELOPMENT_PROCEDURE.md."
+}

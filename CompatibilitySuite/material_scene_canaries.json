@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    { "id": "2956295460", "path": "2956295460", "type": "scene" },
+    { "id": "2986706471", "path": "2986706471", "type": "scene" },
+    { "id": "3415190399", "path": "3415190399", "type": "scene" },
+    { "id": "3448877775", "path": "3448877775", "type": "scene" }
+  ],
+  "selection": "Black/white/flat-frame failures from the September 12 full scene sweeps, retained for material masks, particle atlases, image alignment, and layer color blending. Excludes all four user-designated non-testing wallpapers."
+}

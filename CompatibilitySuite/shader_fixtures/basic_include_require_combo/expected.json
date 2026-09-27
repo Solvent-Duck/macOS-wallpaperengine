@@ -1,0 +1,28 @@
+{
+  "discoveredCombos": {},
+  "fragmentGLSL": "#version 330\n// ======================================================\n// Processed shader effects/basic\n// ======================================================\nprecision highp float;\n#define mul(x, y) ((y) * (x))\n#define max(x, y) max (y, x)\n#define lerp mix\n#define frac fract\n#define CASTU(x) (uint(x))\n#define CAST2(x) (vec2(x))\n#define CAST3(x) (vec3(x))\n#define CAST4(x) (vec4(x))\n#define CAST3X3(x) (mat3(x))\n#define saturate(x) (clamp(x, 0.0, 1.0))\n#define texSample2D texture\n#define texSample2DLod textureLod\n#define DECLARE_SAMPLER2D_PARAMETER(name) sampler2D name\n#define MAKE_SAMPLER2D_ARGUMENT(name) name\n#define log10(x) log2(x) * 0.301029995663981\n#define atan2 atan\n#define fmod(x, y) ((x)-(y)*trunc((x)/(y)))\n#define ddx dFdx\n#define ddy(x) dFdy(-(x))\n#define GLSL 1\n#define float2 vec2\n#define float3 vec3\n#define float4 vec4\n#define half2 vec2\n#define half3 vec3\n#define half4 vec4\n#define float3x3 mat3\n#define float4x4 mat4\n#define float2x2 mat2\n#define gl_FragColor out_FragColor\nout vec4 out_FragColor;\n#define varying in\n#define AA_CATEGORY 1\n#define GMODE 2\nvarying vec2 v_TexCoord;\nuniform sampler2D g_Texture0; // {\"default\":\"materials/test\"}\nuniform vec4 g_Tint; // Added for layer scale correction\n// [COMBO] {\"combo\":\"AA_CATEGORY\",\"type\":\"options\",\"default\":0,\"options\":{Color:0,\"UV\":1}}\n// begin of require libs/noise\nfloat sampleNoise(vec2 uv) {\n    return fract(uv.x + uv.y);\n}\n\n// end of require libs/noise\n\nvoid main() {\n    vec3 noise = vec3(sampleNoise(v_TexCoord), 0.0, 0.0);\n    out_FragColor = texture(g_Texture0, v_TexCoord) + vec4(noise, 1.0) + g_Tint * 0.0;\n}\n",
+  "metal": {
+    "fragmentMSL": "#pragma clang diagnostic ignored \"-Wmissing-prototypes\"\n\n#include <metal_stdlib>\n#include <simd/simd.h>\n\nusing namespace metal;\n\nstruct main0_out\n{\n    float4 out_FragColor;\n};\n\nstruct main0_in\n{\n    float2 v_TexCoord;\n};\n\nstatic inline __attribute__((always_inline))\nfloat sampleNoise(thread const float2& uv)\n{\n    return fract(uv.x + uv.y);\n}\n\nfragment main0_out main0(main0_in in [[stage_in]], constant float4& g_Tint [[buffer(0)]], texture2d<float> g_Texture0 [[texture(0)]], sampler g_Texture0Smplr [[sampler(0)]])\n{\n    main0_out out = {};\n    float2 param = in.v_TexCoord;\n    float3 _noise = float3(sampleNoise(param), 0.0, 0.0);\n    out.out_FragColor = (g_Texture0.sample(g_Texture0Smplr, in.v_TexCoord) + float4(_noise, 1.0)) + (g_Tint * 0.0);\n    return out;\n}\n\n",
+    "fragmentSamplerSlots": {
+      "g_Texture0Smplr": 0
+    },
+    "fragmentTextureSlots": {
+      "g_Texture0": 0
+    },
+    "fragmentUniformSlots": {
+      "g_Tint": 0
+    },
+    "vertexAttributes": [
+      {
+        "bufferIndex": 30,
+        "location": 0,
+        "name": "a_Position",
+        "vecSize": 3
+      }
+    ],
+    "vertexMSL": "#pragma clang diagnostic ignored \"-Wmissing-prototypes\"\n\n#include <metal_stdlib>\n#include <simd/simd.h>\n\nusing namespace metal;\n\nstruct main0_out\n{\n    float2 v_TexCoord;\n    float4 gl_Position [[position]];\n};\n\nstruct main0_in\n{\n    float3 a_Position [[attribute(0)]];\n};\n\nstatic inline __attribute__((always_inline))\nfloat2 computeUV(thread const float2& inputUV)\n{\n    return (inputUV * 0.5) + float2(0.5);\n}\n\nvertex main0_out main0(main0_in in [[stage_in]])\n{\n    main0_out out = {};\n    float2 param = in.a_Position.xy;\n    out.v_TexCoord = computeUV(param);\n    out.gl_Position = float4(in.a_Position, 1.0);\n    return out;\n}\n\n",
+    "vertexUniformSlots": {}
+  },
+  "shaderPath": "effects/basic",
+  "vertexGLSL": "#version 330\n// ======================================================\n// Processed shader effects/basic\n// ======================================================\nprecision highp float;\n#define mul(x, y) ((y) * (x))\n#define max(x, y) max (y, x)\n#define lerp mix\n#define frac fract\n#define CASTU(x) (uint(x))\n#define CAST2(x) (vec2(x))\n#define CAST3(x) (vec3(x))\n#define CAST4(x) (vec4(x))\n#define CAST3X3(x) (mat3(x))\n#define saturate(x) (clamp(x, 0.0, 1.0))\n#define texSample2D texture\n#define texSample2DLod textureLod\n#define DECLARE_SAMPLER2D_PARAMETER(name) sampler2D name\n#define MAKE_SAMPLER2D_ARGUMENT(name) name\n#define log10(x) log2(x) * 0.301029995663981\n#define atan2 atan\n#define fmod(x, y) ((x)-(y)*trunc((x)/(y)))\n#define ddx dFdx\n#define ddy(x) dFdy(-(x))\n#define GLSL 1\n#define float2 vec2\n#define float3 vec3\n#define float4 vec4\n#define half2 vec2\n#define half3 vec3\n#define half4 vec4\n#define float3x3 mat3\n#define float4x4 mat4\n#define float2x2 mat2\n#define attribute in\n#define varying out\n#define AA_CATEGORY 1\n#define GMODE 2\nattribute vec3 a_Position;\nvarying vec2 v_TexCoord;// begin of include from file common/shared\nvec2 computeUV(vec2 inputUV) {\n    return inputUV * 0.5 + vec2(0.5);\n}\n\n// end of included from file common/shared\n\n\n// include common/shared\n\nvoid main() {\n    v_TexCoord = computeUV(a_Position.xy);\n    gl_Position = vec4(a_Position, 1.0);\n}\n"
+}

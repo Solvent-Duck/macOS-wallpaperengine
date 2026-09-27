@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-09-12",
+  "corpus_root": "/Users/isaiahbergstrom/Library/Application Support/Steam/steamapps/workshop/content/431960",
+  "fixtures": [
+    {
+      "id": "2961625527",
+      "path": "2961625527",
+      "type": "scene",
+      "category": "scene-reflection-canary",
+      "known_status": "pass",
+      "notes": "Uses the stock scene reflection sampler and mip metadata; verify scene-sized bindings and nonblack capture. Visual fidelity is not established by launch/capture checks."
+    },
+    {
+      "id": "3061226599",
+      "path": "3061226599",
+      "type": "scene",
+      "category": "scene-reflection-canary",
+      "known_status": "partial",
+      "notes": "Uses the stock scene reflection sampler and mip metadata; verify scene-sized bindings and nonblack capture. Direct models retain 3d-models partial status."
+    },
+    {
+      "id": "3119139541",
+      "path": "3119139541",
+      "type": "scene",
+      "category": "scene-reflection-canary",
+      "known_status": "pass",
+      "notes": "Uses the stock scene reflection sampler and mip metadata; verify scene-sized bindings and nonblack capture. Visual fidelity is not established by launch/capture checks."
+    },
+    {
+      "id": "3178494590",
+      "path": "3178494590",
+      "type": "scene",
+      "category": "scene-reflection-canary",
+      "known_status": "pass",
+      "notes": "Uses the stock scene reflection sampler and mip metadata; verify scene-sized bindings and nonblack capture. Visual fidelity is not established by launch/capture checks."
+    },
+    {
+      "id": "3229704729",
+      "path": "3229704729",
+      "type": "scene",
+      "category": "scene-reflection-canary",
+      "known_status": "partial",
+      "notes": "Uses the stock scene reflection sampler and mip metadata; verify scene-sized bindings and nonblack capture. Direct models retain 3d-models partial status."
+    },
+    {
+      "id": "3232532463",
+      "path": "3232532463",
+      "type": "scene",
+      "category": "scene-reflection-canary",
+      "known_status": "pass",
+      "notes": "Uses the stock scene reflection sampler and mip metadata; verify scene-sized bindings and nonblack capture. Visual fidelity is not established by launch/capture checks."
+    }
+  ]
+}
