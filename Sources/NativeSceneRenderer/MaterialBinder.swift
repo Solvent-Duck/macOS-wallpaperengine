@@ -62,8 +62,8 @@ final class MaterialBinder {
     private var previousMediaTexture: MTLTexture?
     private var effectTextureViews: [ObjectIdentifier: MTLTexture] = [:]
 
-    private var pipelineCache: [String: PreparedMaterialPass] = [:]
-    private var failedShaderKeys: Set<String> = []
+    private var pipelineCache: [PipelineCacheKey: PreparedMaterialPass] = [:]
+    private var failedShaderKeys: Set<PipelineCacheKey> = []
     /// Cache of zero-filled buffers keyed by (shaderKey, bufferIndex).
     private var zeroBufferCache: [String: MTLBuffer] = [:]
     /// Track which shaders we've already warned about unknown attributes (once per shader).
@@ -193,9 +193,11 @@ final class MaterialBinder {
             textures: authoredPass.textures, userTextures: authoredPass.userTextures,
             constants: authoredPass.constants, combos: combos)
         let textureSlots = Set((pass.textures + pass.userTextures).filter { !$0.path.isEmpty }.map(\.slot))
-        let key = cacheKey(material: material, pass: pass)
-            + "#color:\(attachmentFormat.rawValue)"
-            + "#textures:\(textureSlots.sorted())#depth:\(context.depthAttachmentPixelFormat.rawValue):\(pass.depthTest):\(pass.depthWrite)"
+        let key = PipelineCacheKey(sourceFile: material.sourceFile, passIndex: pass.index,
+            shaderPath: pass.shaderPath, blending: pass.blending, combos: pass.combos,
+            colorFormat: attachmentFormat.rawValue, textureSlots: textureSlots,
+            depthFormat: context.depthAttachmentPixelFormat.rawValue,
+            depthTest: pass.depthTest, depthWrite: pass.depthWrite)
         if let cached = pipelineCache[key] {
             // Only the compiled GPU state is shared. Constants and textures
             // belong to this layer and this frame, including animated values.
@@ -1093,8 +1095,19 @@ final class MaterialBinder {
         return z * y * x
     }
 
-    private func cacheKey(material: FrameMaterial, pass: FrameMaterialPass) -> String {
-        "\(material.sourceFile)#\(pass.index)#\(pass.shaderPath)#\(pass.blending)#\(pass.combos.sorted { $0.key < $1.key })"
+    /// Identifies compiled pipeline state. Hashed directly so per-frame lookups
+    /// don't format strings.
+    private struct PipelineCacheKey: Hashable {
+        let sourceFile: String
+        let passIndex: Int
+        let shaderPath: String
+        let blending: Int
+        let combos: [String: Int]
+        let colorFormat: UInt
+        let textureSlots: Set<Int>
+        let depthFormat: UInt
+        let depthTest: Int
+        let depthWrite: Int
     }
 
     private func parseUniforms(vertexGLSL: String, fragmentGLSL: String) -> [String: UniformSpec] {

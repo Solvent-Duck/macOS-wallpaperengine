@@ -1098,10 +1098,10 @@ public final class ScriptHost: @unchecked Sendable {
 
     private func jsonString(for object: Any) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .sortedKeys])
-        guard let string = String(data: data, encoding: .utf8) else {
-            throw ScriptHostError.invalidUTF8Result
-        }
-        return string
+        // JSONSerialization always emits UTF-8. Decode into a native Swift
+        // string: `String(data:encoding:)` returns a bridged NSString whose
+        // `withCString` copies one character at a time on every evaluation.
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func jsValueObject(for value: FrameValue) -> Any {

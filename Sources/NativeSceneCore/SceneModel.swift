@@ -91,7 +91,14 @@ public final class DynamicValueDescriptor: Codable, Equatable, @unchecked Sendab
     ) {
         self.kind = kind
         self.value = value
-        self.scriptSource = scriptSource
+        // Sources parsed by JSONSerialization arrive as bridged NSStrings, and
+        // the script host hashes and C-string-copies them every frame. Store
+        // native UTF-8 so those operations take the fast path.
+        self.scriptSource = scriptSource.map { source in
+            var native = source
+            native.makeContiguousUTF8()
+            return native
+        }
         self.baseValue = baseValue
         self.scriptProperties = scriptProperties
         self.animation = animation

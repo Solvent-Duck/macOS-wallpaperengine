@@ -402,7 +402,9 @@ class SceneRenderer: WallpaperRenderer {
 
         // Display links can run faster than 30 Hz. The automation timer is
         // already capped, so small timer jitter must not discard every other frame.
-        guard automationTimer != nil || elapsed >= (1.0 / 30.0) else { return }
+        // Display ticks land a hair before 1/30 s apart, so allow a little slack;
+        // without it a 120 Hz link skips to every fifth tick (24 fps).
+        guard automationTimer != nil || elapsed >= (1.0 / 30.0) - 0.002 else { return }
 
         let delta = elapsed
         lastRenderTime = now

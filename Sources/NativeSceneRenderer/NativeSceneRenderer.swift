@@ -129,6 +129,17 @@ public final class NativeSceneRenderer {
     }
     private var effectTextureFormats: [ObjectIdentifier: EffectRenderTargetFormat] = [:]
 
+    private struct RenderTextureKey: Hashable {
+        let width: Int
+        let height: Int
+        let pixelFormat: MTLPixelFormat
+    }
+
+    /// Render textures handed out during the current frame.
+    private var leasedRenderTextures: [MTLTexture] = []
+    /// Last frame's render textures, reusable by size and format this frame.
+    private var reusableRenderTextures: [RenderTextureKey: [MTLTexture]] = [:]
+
     private struct SceneDraw {
         let frame: FrameNode
         var geometry: DirectModelRenderer.Geometry? = nil
@@ -450,6 +461,7 @@ public final class NativeSceneRenderer {
         let particleSystemsByID = Dictionary(uniqueKeysWithValues: packet.particleSystems.map { ($0.nodeID, $0) })
         let textsByID = Dictionary(packet.texts.map { ($0.nodeID, $0) }, uniquingKeysWith: { first, _ in first })
         let viewportSize = CGSize(width: targetTexture.width, height: targetTexture.height)
+        try recycleRenderTextures(commandBuffer: commandBuffer)
         var currentScene = try makeRenderTexture(width: targetTexture.width, height: targetTexture.height)
         var nextScene = try makeRenderTexture(width: targetTexture.width, height: targetTexture.height)
         try clearTexture(currentScene, color: clear, commandBuffer: commandBuffer)
@@ -1369,22 +1381,44 @@ public final class NativeSceneRenderer {
         }
     }
 
+    /// Returns last frame's render textures to the reuse pool. Allocating
+    /// every intermediate target per frame costs hundreds of MB of fresh GPU
+    /// memory at 4K. Textures that effects keep across frames stay out of the
+    /// pool, and anything not reused this frame is released at the next call.
+    /// Pooled textures are cleared here, before any encoder is open, so they
+    /// match a fresh allocation's transparent contents.
+    private func recycleRenderTextures(commandBuffer: MTLCommandBuffer) throws {
+        let retained = Set(effectTargetHistory.values.flatMap { $0.values.map { ObjectIdentifier($0.texture) } })
+        reusableRenderTextures.removeAll(keepingCapacity: true)
+        for texture in leasedRenderTextures where !retained.contains(ObjectIdentifier(texture)) {
+            let key = RenderTextureKey(width: texture.width, height: texture.height, pixelFormat: texture.pixelFormat)
+            try clearTexture(texture, color: .zero, commandBuffer: commandBuffer)
+            reusableRenderTextures[key, default: []].append(texture)
+        }
+        leasedRenderTextures.removeAll(keepingCapacity: true)
+    }
+
     private func makeRenderTexture(
         width: Int,
         height: Int,
         pixelFormat: MTLPixelFormat = .rgba8Unorm
     ) throws -> MTLTexture {
+        let key = RenderTextureKey(width: max(width, 1), height: max(height, 1), pixelFormat: pixelFormat)
+        if let texture = reusableRenderTextures[key]?.popLast() {
+            leasedRenderTextures.append(texture)
+            return texture
+        }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: pixelFormat,
-            width: max(width, 1),
-            height: max(height, 1),
+            width: key.width,
+            height: key.height,
             mipmapped: false
         )
         descriptor.usage = [.shaderRead, .renderTarget]
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             throw NativeSceneRendererError.unsupportedScene("failed to allocate render texture")
         }
-
+        leasedRenderTextures.append(texture)
         return texture
     }
 
