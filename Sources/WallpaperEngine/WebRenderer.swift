@@ -88,6 +88,25 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         webView.setAllMediaPlaybackSuspended(suspended, completionHandler: nil)
     }
 
+    // MARK: - Audio
+
+    var supportsAudio: Bool { true }
+
+    /// Web wallpapers play their own audio unmuted unless the user mutes them.
+    var isMuted = false {
+        didSet {
+            guard isMuted != oldValue, isLoaded else { return }
+            injectMuteState()
+            injectGeneralProperties()
+        }
+    }
+
+    /// Mute every media element; elements created later are muted on play().
+    /// Web Audio graphs (AudioContext) are not covered.
+    private func injectMuteState() {
+        webView.evaluateJavaScript("if(window._weSetMuted){window._weSetMuted(\(isMuted));}", completionHandler: nil)
+    }
+
     func updateCursorPosition(_ position: NSPoint) {
         let js = "if(window._weCursorCallback){window._weCursorCallback(\(position.x),\(position.y));}"
         webView.evaluateJavaScript(js, completionHandler: nil)
@@ -102,6 +121,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         for p in properties { merged[p.key] = values[p.key] ?? p.defaultValue }
         propertyValues = merged
         if isLoaded {
+            injectMuteState()
             injectGeneralProperties()
             injectAllProperties()
         }
@@ -150,6 +170,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         guard let navigation, navigation === activeNavigation else { return }
         isLoaded = true
         print("[WebRenderer] Page loaded successfully")
+        injectMuteState()
         injectGeneralProperties()
         injectAllProperties()
         if !isPlaying { webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil) }
@@ -198,7 +219,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         (function(){
             var l=window.wallpaperPropertyListener;
             if(l&&l.applyGeneralProperties){
-                l.applyGeneralProperties({fps:30,audioprocessing:false,muted:false,volume:100});
+                l.applyGeneralProperties({fps:30,audioprocessing:false,muted:\(isMuted),volume:\(isMuted ? 0 : 100)});
             }
         })();
         """
@@ -252,6 +273,35 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
                     try { window._weAudioCallbacks[i](zero); } catch(e) {}
                 }
             }, 33);
+        })();
+
+        // --- Host mute ---
+        // Remembers each element's own muted state so unmuting restores it.
+        // Played elements are tracked too, so detached `new Audio()` is covered.
+        window._weMuted = false;
+        var playedMedia = new Set();
+        window._weSetMuted = function(muted) {
+            window._weMuted = !!muted;
+            var media = new Set(document.querySelectorAll('audio,video'));
+            playedMedia.forEach(function(el) { media.add(el); });
+            media.forEach(applyHostMute);
+        };
+        function applyHostMute(el) {
+            if (window._weMuted) {
+                if (el._weOwnMuted === undefined) el._weOwnMuted = el.muted;
+                el.muted = true;
+            } else if (el._weOwnMuted !== undefined) {
+                el.muted = el._weOwnMuted;
+                el._weOwnMuted = undefined;
+            }
+        }
+        (function() {
+            var play = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function() {
+                playedMedia.add(this);
+                if (window._weMuted) applyHostMute(this);
+                return play.apply(this, arguments);
+            };
         })();
 
         // --- Cursor position ---

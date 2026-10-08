@@ -8,16 +8,30 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var viewModel: GalleryViewModel?
 
-    /// The root directory to scan for wallpaper projects.
-    var wallpaperDirectory: URL {
-        if let saved = UserDefaults.standard.string(forKey: "wallpaperDirectory") {
-            return URL(fileURLWithPath: saved)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Steam/steamapps/workshop/content/431960")
+    private static let directoryDefaultsKey = "wallpaperDirectory"
+
+    /// The folders scanned when the user hasn't chosen one: the user guide's
+    /// copy-in folder first (so copies win over duplicates), then Steam's workshop.
+    static var defaultWallpaperDirectories: [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            home.appendingPathComponent("Wallpaper Projects", isDirectory: true),
+            home.appendingPathComponent("Library/Application Support/Steam/steamapps/workshop/content/431960", isDirectory: true),
+        ]
     }
 
-    func showGallery(onSelect: @escaping (URL) -> Void) {
+    /// The root directories to scan for wallpaper projects.
+    var wallpaperDirectories: [URL] {
+        if let saved = UserDefaults.standard.string(forKey: Self.directoryDefaultsKey) {
+            return [URL(fileURLWithPath: saved, isDirectory: true)]
+        }
+        return Self.defaultWallpaperDirectories.filter { url in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+    }
+
+    func showGallery(onSelect: @escaping @MainActor (URL) async -> Void) {
         // If already open, bring to front
         if let existing = window, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
@@ -26,6 +40,7 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
         }
 
         let vm = GalleryViewModel(onSelect: onSelect)
+        vm.onChooseFolder = { [weak self] in self?.chooseFolder() }
         self.viewModel = vm
 
         let galleryView = GalleryView(viewModel: vm)
@@ -43,16 +58,30 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
         self.window = win
 
         // Switch to regular app so the window is focusable
-        NSApp.setActivationPolicy(.regular)
+        AppActivation.windowDidOpen()
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         // Scan for wallpapers
-        vm.scan(directory: wallpaperDirectory)
+        vm.scan(directories: wallpaperDirectories)
     }
 
     func rescan() {
-        viewModel?.scan(directory: wallpaperDirectory)
+        viewModel?.scan(directories: wallpaperDirectories)
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the folder that contains your wallpaper folders"
+        panel.directoryURL = wallpaperDirectories.first
+        guard let window, panel.runModal() == .OK, let url = panel.url else { return }
+        UserDefaults.standard.set(url.path, forKey: Self.directoryDefaultsKey)
+        window.makeKeyAndOrderFront(nil)
+        rescan()
     }
 
     // MARK: - NSWindowDelegate
@@ -60,7 +89,7 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         window = nil
         viewModel = nil
-        // Revert to menu bar-only accessory app
-        NSApp.setActivationPolicy(.accessory)
+        // Revert to menu bar-only accessory app unless another window is open
+        AppActivation.windowDidClose()
     }
 }

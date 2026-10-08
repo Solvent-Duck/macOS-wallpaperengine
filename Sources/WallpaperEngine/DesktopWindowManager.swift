@@ -30,10 +30,13 @@ class DesktopWindowManager {
         return controller
     }()
     private var isVisible = true
-    private var isManuallyPaused = false
+    /// Whether the user paused playback (as opposed to occlusion or sleep).
+    private(set) var isManuallyPaused = false
     private var isSleeping = false
     private var isTearingDown = false
     private var lastRebuildTime: Double = 0
+    private var loadGeneration = 0
+    private var pendingPropertySave: Task<Void, Never>?
     var automationMode = false
 
     /// NSProcessInfo activity token held while the wallpaper is actively rendering.
@@ -54,6 +57,15 @@ class DesktopWindowManager {
 
     /// Current (user-modified or default) property values.
     var currentPropertyValues: [String: String] { propertyValues }
+
+    /// Why playback is paused, or nil while it is playing (or nothing is loaded).
+    var pauseReason: String? {
+        guard currentProject != nil else { return nil }
+        if isManuallyPaused { return "Paused" }
+        if isSleeping { return "Paused while asleep" }
+        if !automationMode && !isVisible { return "Paused while covered" }
+        return nil
+    }
 
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
@@ -121,23 +133,48 @@ class DesktopWindowManager {
     // MARK: - Wallpaper Loading
 
     /// Load a wallpaper from a file or directory URL.
-    func loadWallpaper(from url: URL) {
+    ///
+    /// The current wallpaper keeps playing while the project is parsed and any
+    /// WebM source is transcoded off the main thread. Throws `CancellationError`
+    /// when a newer load superseded this one while it was preparing.
+    func loadWallpaper(from url: URL) async throws {
+        loadGeneration += 1
+        let generation = loadGeneration
+        do {
+            let project = try WallpaperLoader.load(from: url)
+            guard let fileURL = project.fileURL else {
+                throw WallpaperError.fileNotFound(url)
+            }
+            var mediaURL = fileURL
+            if project.resolvedType == .video, WebMTranscoder.isWebM(fileURL) {
+                mediaURL = try await Task.detached(priority: .userInitiated) {
+                    try WebMTranscoder.transcode(webmURL: fileURL)
+                }.value
+                guard generation == loadGeneration else { throw CancellationError() }
+            }
+            try activate(project, mediaURL: mediaURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func activate(_ project: WallpaperProject, mediaURL: URL) throws {
         // Stop any existing wallpaper
+        flushPendingPropertySave()
         audioReactivity.stop()
         mediaIntegration.stop()
         let previousRenderers = renderers
         renderers = []
         previousRenderers.forEach { $0.stop() }
+        // Choosing a wallpaper is an explicit request to play it.
+        isManuallyPaused = false
 
         do {
-            let project = try WallpaperLoader.load(from: url)
             currentProject = project
             print("[WallpaperEngine] Loaded project: \"\(project.resolvedTitle)\" (type: \(project.resolvedType.rawValue))")
-
-            guard let fileURL = project.fileURL else {
-                print("[WallpaperEngine] Error: Could not resolve wallpaper file URL")
-                return
-            }
 
             sceneScriptStorage = nil
             if project.resolvedType == .scene {
@@ -145,12 +182,12 @@ class DesktopWindowManager {
                     .appendingPathComponent("WallpaperEngine/SceneScriptStorage", isDirectory: true)
                 let identity = SceneScriptStorage.wallpaperIdentity(
                     workshopID: project.type == .preset ? nil : project.sceneDescription?.metadata.workshopId,
-                    directory: project.directoryURL ?? fileURL
+                    directory: project.directoryURL ?? mediaURL
                 )
                 sceneScriptStorage = try SceneScriptStorage(directory: directory, wallpaperID: identity)
             }
             let newRenderers = try windows.map { window in
-                try createRenderer(for: project, fileURL: fileURL, screen: window.screen)
+                try createRenderer(for: project, fileURL: mediaURL, screen: window.screen)
             }
             renderers = newRenderers
             PerformanceMonitor.shared.setRenderer(type: project.resolvedType.rawValue.capitalized, status: "Playing")
@@ -173,9 +210,10 @@ class DesktopWindowManager {
                 newRenderers.forEach { $0.play() }
             }
             updateAppNapAssertion()
-
         } catch {
-            print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
+            // The previous wallpaper is already stopped; don't report it as current.
+            clearWallpaper()
+            throw error
         }
     }
 
@@ -222,6 +260,7 @@ class DesktopWindowManager {
             return
         }
         isTearingDown = true
+        flushPendingPropertySave()
         audioReactivity.stop()
         mediaIntegration.stop()
         cursorTracker.stop()
@@ -246,6 +285,7 @@ class DesktopWindowManager {
 
     /// Stop and remove the current wallpaper.
     func clearWallpaper() {
+        flushPendingPropertySave()
         audioReactivity.stop()
         mediaIntegration.stop()
         cursorTracker.stop()
@@ -268,7 +308,7 @@ class DesktopWindowManager {
         if let prop = currentProject?.resolvedProperties.first(where: { $0.key == key }) {
             renderers.forEach { $0.applyProperty(prop, value: value) }
         }
-        savePropertyValues()
+        schedulePropertySave()
     }
 
     func resetProperties() -> Bool {
@@ -283,6 +323,8 @@ class DesktopWindowManager {
             if canResume { renderers.forEach { $0.play() } }
             return false
         }
+        pendingPropertySave?.cancel()
+        pendingPropertySave = nil
         propertyValues = mergedValues(properties: project.resolvedProperties, saved: [:])
         renderers.forEach { $0.applyProperties(project.resolvedProperties, values: propertyValues) }
         savePropertyValues()
@@ -311,13 +353,7 @@ class DesktopWindowManager {
     private func createRenderer(for project: WallpaperProject, fileURL: URL, screen: NSScreen?) throws -> WallpaperRenderer {
         switch project.resolvedType {
         case .video:
-            let resolvedURL: URL
-            if WebMTranscoder.isWebM(fileURL) {
-                resolvedURL = try WebMTranscoder.transcode(webmURL: fileURL)
-            } else {
-                resolvedURL = fileURL
-            }
-            return VideoRenderer(fileURL: resolvedURL)
+            return VideoRenderer(fileURL: fileURL)
         case .web:
             return WebRenderer(fileURL: fileURL, readAccessURL: project.type == .preset ? project.directoryURL?.deletingLastPathComponent() : nil)
         case .scene:
@@ -465,6 +501,24 @@ class DesktopWindowManager {
     private func savePropertyValues() {
         guard let project = currentProject else { return }
         UserDefaults.standard.set(propertyValues, forKey: userDefaultsKey(for: project))
+    }
+
+    /// Slider and colour drags change values every frame; persist once they settle.
+    private func schedulePropertySave() {
+        pendingPropertySave?.cancel()
+        pendingPropertySave = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self else { return }
+            self.pendingPropertySave = nil
+            self.savePropertyValues()
+        }
+    }
+
+    private func flushPendingPropertySave() {
+        guard let pending = pendingPropertySave else { return }
+        pending.cancel()
+        pendingPropertySave = nil
+        savePropertyValues()
     }
 
     private func mergedValues(properties: [WallpaperProperty], saved: [String: String]) -> [String: String] {

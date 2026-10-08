@@ -22,6 +22,10 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
     @Published var selectedTypes: Set<WallpaperType> = []
     @Published var searchText: String = ""
     @Published var isScanning = false
+    /// Folders included in the most recent scan; empty when none exist.
+    @Published var scannedDirectories: [URL] = []
+    /// The wallpaper currently being loaded, for a progress overlay.
+    @Published var loadingURL: URL?
 
     @Published var sortOrder: GallerySortOrder {
         didSet { UserDefaults.standard.set(sortOrder.rawValue, forKey: "gallery.sortOrder") }
@@ -30,9 +34,10 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
         didSet { UserDefaults.standard.set(tagFilterMode.rawValue, forKey: "gallery.tagFilterMode") }
     }
 
-    let onSelect: (URL) -> Void
+    let onSelect: @MainActor (URL) async -> Void
+    var onChooseFolder: (@MainActor () -> Void)?
 
-    init(onSelect: @escaping (URL) -> Void) {
+    init(onSelect: @escaping @MainActor (URL) async -> Void) {
         self.onSelect = onSelect
 
         let savedSort = UserDefaults.standard.string(forKey: "gallery.sortOrder")
@@ -115,44 +120,27 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
         selectedTypes.removeAll()
     }
 
-    func scan(directory: URL) {
+    @MainActor
+    func select(_ url: URL) {
+        guard loadingURL == nil else { return }
+        loadingURL = url
+        Task { @MainActor in
+            await onSelect(url)
+            loadingURL = nil
+        }
+    }
+
+    /// Scan each directory's immediate subfolders. A wallpaper folder name that
+    /// appears in more than one directory is kept from the earliest directory.
+    func scan(directories: [URL]) {
         isScanning = true
+        scannedDirectories = directories
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var projects: [WallpaperProject] = []
-            let fm = FileManager.default
-
-            guard let contents = try? fm.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                DispatchQueue.main.async {
-                    self?.isScanning = false
-                }
-                return
-            }
-
-            for itemURL in contents {
-                let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                guard isDir else { continue }
-
-                if let project = try? WallpaperLoader.load(from: itemURL) {
-                    projects.append(project)
-                }
-            }
-
-            // Load tags.json sidecar if present; it is the sole tag source for this build.
-            // Falls back to project.json tags only when tags.json does not exist.
-            let sidecarURL = directory.appendingPathComponent("tags.json")
-            if let data = try? Data(contentsOf: sidecarURL),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
-                for i in projects.indices {
-                    let workshopId = projects[i].directoryURL?.lastPathComponent ?? ""
-                    if let merged = json[workshopId]?["merged_tags"] as? [String] {
-                        projects[i].tags = merged
-                    }
-                }
+            var seenNames = Set<String>()
+            for directory in directories {
+                projects += Self.scanProjects(in: directory, skipping: &seenNames)
             }
 
             var tagSet = Set<String>()
@@ -168,5 +156,38 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
                 self?.isScanning = false
             }
         }
+    }
+
+    static func scanProjects(in directory: URL, skipping seenNames: inout Set<String>) -> [WallpaperProject] {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var projects: [WallpaperProject] = []
+        for itemURL in contents {
+            let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir, !seenNames.contains(itemURL.lastPathComponent) else { continue }
+
+            if let project = try? WallpaperLoader.load(from: itemURL) {
+                seenNames.insert(itemURL.lastPathComponent)
+                projects.append(project)
+            }
+        }
+
+        // Load tags.json sidecar if present; it is the sole tag source for this build.
+        // Falls back to project.json tags only when tags.json does not exist.
+        let sidecarURL = directory.appendingPathComponent("tags.json")
+        if let data = try? Data(contentsOf: sidecarURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
+            for i in projects.indices {
+                let workshopId = projects[i].directoryURL?.lastPathComponent ?? ""
+                if let merged = json[workshopId]?["merged_tags"] as? [String] {
+                    projects[i].tags = merged
+                }
+            }
+        }
+        return projects
     }
 }

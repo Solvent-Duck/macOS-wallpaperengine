@@ -249,8 +249,9 @@ private struct TextControl: View {
 
 /// Manages the floating properties panel. Owned by AppDelegate.
 @MainActor
-final class PropertiesWindowController: NSObject {
+final class PropertiesWindowController: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
+    private var holdsActivation = false
 
     /// Show (or update) the properties panel for the current wallpaper.
     func show(title: String,
@@ -265,6 +266,7 @@ final class PropertiesWindowController: NSObject {
         if let existing = panel {
             existing.title = "Properties — \(title)"
             existing.contentViewController = vc
+            acquireActivation()
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -281,14 +283,28 @@ final class PropertiesWindowController: NSObject {
         p.hidesOnDeactivate  = false
         p.isReleasedWhenClosed = false
         p.contentViewController = vc
+        p.delegate = self
         p.center()
 
         self.panel = p
+        acquireActivation()
         p.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func close() {
         panel?.close()
+    }
+
+    private func acquireActivation() {
+        guard !holdsActivation else { return }
+        holdsActivation = true
+        AppActivation.windowDidOpen()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard holdsActivation else { return }
+        holdsActivation = false
+        AppActivation.windowDidClose()
     }
 }

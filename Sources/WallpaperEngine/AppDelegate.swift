@@ -13,7 +13,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let windowManager = DesktopWindowManager()
     private let galleryController = GalleryWindowController()
     private let launchOptions: LaunchOptions
-    private var isPaused = false
     var initialWallpaperPath: String?
     private var automationController: AutomationController?
 
@@ -45,25 +44,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager.setupWindows()
         print("[WallpaperEngine] Ready — \(NSScreen.screens.count) display(s) detected")
 
-        if let path = initialWallpaperPath {
-            let url = URL(fileURLWithPath: path)
-            windowManager.loadWallpaper(from: url)
-            if !launchOptions.isAutomation {
-                updateMenuState()
-            }
-        }
-
         if launchOptions.isAutomation {
-            guard initialWallpaperPath != nil else {
+            guard let path = initialWallpaperPath else {
                 print("[Automation] \(AutomationError.missingWallpaperPath.localizedDescription)")
                 terminateProcess(exitCode: 1)
                 return
             }
-
-            automationController = AutomationController(options: launchOptions) { [weak self] exitCode in
-                self?.terminateProcess(exitCode: exitCode)
+            Task {
+                // A load failure is already logged; automation then reports
+                // the missing renderer and exits non-zero.
+                try? await windowManager.loadWallpaper(from: URL(fileURLWithPath: path))
+                automationController = AutomationController(options: launchOptions) { [weak self] exitCode in
+                    self?.terminateProcess(exitCode: exitCode)
+                }
+                automationController?.start(with: windowManager)
             }
-            automationController?.start(with: windowManager)
+        } else if let path = initialWallpaperPath {
+            Task { await loadWallpaper(from: URL(fileURLWithPath: path)) }
         }
     }
 
@@ -170,8 +167,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMenuState() {
         let hasWallpaper = windowManager.currentTitle != nil
 
-        currentWallpaperItem.title = windowManager.currentTitle ?? "No wallpaper loaded"
-        pauseResumeItem.title = isPaused ? "Resume" : "Pause"
+        if let title = windowManager.currentTitle {
+            currentWallpaperItem.title = windowManager.pauseReason.map { "\(title) — \($0)" } ?? title
+        } else {
+            currentWallpaperItem.title = "No wallpaper loaded"
+        }
+        if let loading = loadingName {
+            currentWallpaperItem.title = "Loading \(loading)…"
+        }
+        pauseResumeItem.title = windowManager.isManuallyPaused ? "Resume" : "Pause"
         pauseResumeItem.isEnabled = hasWallpaper
         audioToggleItem.title = windowManager.isMuted ? "Unmute Audio" : "Mute Audio"
         audioToggleItem.isEnabled = hasWallpaper && windowManager.supportsAudio
@@ -209,11 +213,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openGallery() {
         galleryController.showGallery { [weak self] url in
-            self?.windowManager.loadWallpaper(from: url)
-            self?.isPaused = false
-            self?.updateMenuState()
-            self?.refreshPropertiesWindowIfNeeded()
+            await self?.loadWallpaper(from: url)
         }
+    }
+
+    /// Name shown in the menu while a wallpaper is preparing (e.g. WebM transcode).
+    private var loadingName: String?
+
+    /// Load a user-chosen wallpaper and report failures instead of silently doing nothing.
+    private func loadWallpaper(from url: URL) async {
+        loadingName = url.lastPathComponent
+        updateMenuState()
+        defer {
+            if loadingName == url.lastPathComponent { loadingName = nil }
+            updateMenuState()
+        }
+        do {
+            try await windowManager.loadWallpaper(from: url)
+        } catch is CancellationError {
+            return
+        } catch {
+            presentLoadError(error, for: url)
+        }
+        refreshPropertiesWindowIfNeeded()
+    }
+
+    private func presentLoadError(_ error: Error, for url: URL) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn’t load “\(url.lastPathComponent)”"
+        alert.informativeText = error.localizedDescription
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func selectWallpaper() {
@@ -228,19 +259,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.windowManager.loadWallpaper(from: url)
-            self?.isPaused = false
-            self?.updateMenuState()
-            self?.refreshPropertiesWindowIfNeeded()
+            Task { await self?.loadWallpaper(from: url) }
         }
     }
 
     @objc private func togglePause() {
-        isPaused.toggle()
-        if isPaused {
-            windowManager.pauseWallpaper()
-        } else {
+        if windowManager.isManuallyPaused {
             windowManager.resumeWallpaper()
+        } else {
+            windowManager.pauseWallpaper()
         }
         updateMenuState()
     }
@@ -280,7 +307,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func clearWallpaper() {
         windowManager.clearWallpaper()
-        isPaused = false
         updateMenuState()
         propertiesController?.close()
     }
