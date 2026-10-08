@@ -37,28 +37,39 @@ onto `main` once PR #1 merges.
 | A Settings "Wallpaper Library" section lists the scanned folders | `SettingsView.swift:92` | Add a "Steam Workshop" section beside it: Steam status, SDK path, and the sync toggle. |
 | A custom library folder **replaces** the defaults | `LibraryFolders.directories` | Open question: should Workshop folders still be scanned when a custom folder is set? Proposal: keep replace semantics for the gallery, but let SDK sync keep running and the Browse view still show installed state. |
 
-## Phase 0 — SDK test (go/no-go, 1–2 days)
+## Phase 0 — SDK test: PASSED (2026-10-08)
 
-A throwaway command-line target, `SteamWorkshopProbeTool`, kept local and never shipped.
+The probe was a throwaway C++ program built against `~/sdk` (Steamworks SDK, `SteamUGC_v021`),
+with `SteamAppId=431960` set in its environment. No `steam_appid.txt` was needed.
 
-- Load `libsteam_api.dylib` with `dlopen` from a path the user provides (we can't
-  redistribute it; see Risks).
-- Set `SteamAppId=431960` / `SteamGameId=431960` in the environment, then call
-  `SteamAPI_Init`.
-- Exercise:
-  - `GetNumSubscribedItems` / `GetSubscribedItems`
-  - `GetItemState`, `GetItemInstallInfo`, `GetItemDownloadInfo`
-  - `DownloadItem(id, highPriority: true)` on an item that is subscribed but not installed
-  - `SubscribeItem` / `UnsubscribeItem` round-trip on a test item
-  - one `CreateQueryAllUGCRequest` page (titles, preview URLs, tags)
-- Write down the side effects:
-  - "In-game: Wallpaper Engine" status in Steam
-  - what happens if the Windows app is also running under the same account elsewhere
-  - whether `SteamAPI_Shutdown` clears the status right away
+| Check | Result |
+|---|---|
+| `SteamAPI_InitEx` | OK. `GetAppID` = 431960; ownership check passed; `BIsAppInstalled` = false (doesn't matter) |
+| Subscribed items | 711 subscribed / 472 installed / 239 never downloaded by Steam itself. `GetItemInstallInfo` returns the `content/431960/<id>` folder |
+| `DownloadItem` on a never-downloaded item | Accepted. About 40 s later (12.8 MB): `ItemInstalled_t` and `DownloadItemResult_t` (OK) fired; folder has `project.json`, `scene.pkg`, `preview.jpg` |
+| `CreateQueryAllUGCRequest` (trending) | OK. 50 per page, 3.2M total; titles, tags, votes and preview URLs returned |
+| `SubscribeItem` / `UnsubscribeItem` | **Not run.** It changes the account; run it on a throwaway item with the user's OK |
+| "In-game" status, conflict with a Windows PC on the same account | **Not observed** (headless run); check by eye during Phase 2 |
 
-**Go:** init succeeds, the subscribed list matches the website, `DownloadItem` delivers files
-to `GetItemInstallInfo`'s folder, and the install callback fires.
-**No-go:** ship Phase 1 only and drop Phases 2–4.
+Findings that change the design:
+- **The subscription list is empty right after Steam launches.** The first run (seconds after
+  Steam started) reported 0 subscriptions; the next run reported 711. Sync must wait until
+  the list is populated (retry with backoff) and must never treat "0 subscribed" as
+  "everything was unsubscribed".
+- **Steam doesn't download 431960 items on its own.** Of 711 subscriptions, 239 sat
+  undownloaded (state `Subscribed|NeedsUpdate`). Active sync (Phase 2) is what makes
+  subscribing actually deliver wallpapers.
+- **Subscriptions are readable without the SDK.**
+  `Steam/userdata/<accountid>/ugc/431960_subscriptions.vdf` lists every subscribed id (711,
+  matching the SDK). Phase 1 can show subscribed-but-not-downloaded items, and the plan should
+  pick the account folder by the logged-in user (two accounts exist under `userdata/` here).
+- **`GetItemDownloadInfo` reports 0/0 while an item is waiting to download.** The UI needs a
+  "Queued" state, not just a progress bar.
+- **The default catalogue query includes Mature items** (Wallpaper Engine tags its content
+  rating as Everyone / Questionable / Mature). Browse must filter by rating, defaulting to
+  Everyone, with a setting to change it.
+- **`libsteam_api.dylib`'s install name is `@loader_path`.** Either copy it next to the
+  helper binary (from the user's SDK path) or `dlopen` it by absolute path.
 
 ## Phase 1 — Passive sync without the SDK (ships regardless)
 
@@ -70,6 +81,9 @@ New target `SteamLibrary` (pure Swift, no Steam dependency):
   `libraryfolders.vdf`, and returns each `<lib>/steamapps/workshop/content/431960` that exists.
 - `WorkshopManifest`: reads `WorkshopItemsInstalled` from each library's
   `appworkshop_431960.acf` (id → size, `timeupdated`, manifest).
+- `WorkshopSubscriptions`: reads `userdata/<accountid>/ugc/431960_subscriptions.vdf` for the
+  logged-in account (SteamID64 from `config/loginusers.vdf` minus 76561197960265728). The library can then show
+  subscribed items Steam hasn't downloaded, as "Not downloaded" placeholders.
 - `WorkshopFolderWatcher`:
   - an FSEvents stream on each content folder plus its `.acf`
   - debounced, and emits `added(id)` / `removed(id)` / `updated(id)` by comparing against the
@@ -103,7 +117,7 @@ App integration:
 **Limitation:** Steam may not download 431960 items until something asks for them. That's
 what Phase 2 fixes.
 
-## Phase 2 — Active sync through the SDK (after Phase 0 says go)
+## Phase 2 — Active sync through the SDK
 
 ### `SteamWorkshopHelper` (separate executable)
 
@@ -129,7 +143,9 @@ what Phase 2 fixes.
   default) and the dylib path is valid. Settings shows status: Steam not running / SDK not
   found / syncing / up to date.
 - On start and on each subscribe/unsubscribe callback, compares the subscribed set with
-  what's installed:
+  what's installed. It waits until the subscription list is populated (it reads 0 right
+  after Steam launches) and never acts on an empty list. Downloads are queued a few at a
+  time; the first sync here is 239 items:
   - missing or `NeedsUpdate` → `DownloadItem`
   - unsubscribed → Steam deletes the content, and the Phase 1 watcher handles the gallery
 - Progress from `GetItemDownloadInfo` appears:
@@ -155,6 +171,8 @@ what Phase 2 fixes.
   - the existing search field drives the query text
   - tag filters, paging
   - preview images fetched from the returned URLs
+  - a content-rating filter (Everyone / Questionable / Mature tags), defaulting to Everyone
+    and changeable in Settings
 - The inspector, for a remote item: preview, title, author, description, vote score, and a
   **Subscribe** button in place of **Apply**. Once installed, the same inspector switches to
   the local wallpaper (Apply, properties, playback), so one wallpaper never has two inspectors.
@@ -188,7 +206,6 @@ what Phase 2 fixes.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| `SteamAPI_Init` or `DownloadItem` refuses a Windows-only app on macOS | Phases 2–4 can't happen | Phase 0 settles it before any real work; Phase 1 is still useful |
 | Using another developer's app ID breaches the Steamworks terms if distributed | Can't ship publicly | Personal builds only, SDK sync off by default; contact the Wallpaper Engine developer before any public release |
 | SDK binaries can't be redistributed | Repo can't vendor it | `dlopen` from a user-supplied path set in Settings; a docs page explains how to get the SDK |
 | "In-game: Wallpaper Engine" status and a single session at a time | Annoying; may conflict with a Windows PC on the same account | Helper runs only while syncing or browsing, then calls `SteamAPI_Shutdown` |
