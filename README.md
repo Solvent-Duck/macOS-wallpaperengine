@@ -8,7 +8,7 @@ A macOS application that plays animated [Wallpaper Engine](https://store.steampo
 - **Web wallpapers** — HTML/JS/CSS bundles with Wallpaper Engine JavaScript API polyfill
 - **Multi-monitor support** — one wallpaper window per connected display
 - **Smart power management** — automatically pauses rendering when the desktop is covered
-- **Gallery browser** — SwiftUI window for browsing installed wallpapers with preview thumbnails and tag filtering
+- **Wallpaper library** — SwiftUI window with a sidebar (favorites, recent, types, tags), a thumbnail grid and an inspector for details, Apply and per-wallpaper settings
 - **Menu bar controls** — pause/resume, mute/unmute audio, clear wallpaper, open gallery
 - **Package support** — reads Wallpaper Engine's `.pkg` archive format
 
@@ -108,24 +108,22 @@ Clicking the menu bar icon opens a popover with:
 | Now playing | Current wallpaper preview, title and status (playing, paused and why, loading) |
 | Pause / Mute / Customize | Toggle playback, toggle wallpaper audio (muted by default), open the wallpaper's properties |
 | Recent | The last eight wallpapers; click one to apply it |
-| Browse Wallpapers… / folder button | Open the gallery, or pick any wallpaper file or directory |
+| Browse Wallpapers… / folder button | Open the wallpaper library, or pick any wallpaper file or directory |
 | Clear Wallpaper | Remove the current wallpaper (it is then not restored at next launch) |
 | Settings (gear) | Startup, library folder, audio response, now-playing source, diagnostics |
 | Quit (power) | Exit the application |
 
 The last wallpaper is restored when the app starts (turn this off in Settings). Settings can also add a login item, which starts the executable you launched from.
 
-### Gallery
+### Wallpaper Library
 
-Click **Browse Wallpapers…** in the menu bar popover to open the gallery window. It scans `~/Wallpaper Projects/` and the Steam Workshop folder for installed wallpaper directories containing a `project.json` file; choose a different folder in Settings or the gallery toolbar.
+Click **Browse Wallpapers…** in the menu bar popover to open the library window. It scans `~/Wallpaper Projects/` and the Steam Workshop folder for installed wallpaper directories containing a `project.json` file (metadata only, so it takes well under a second); choose a different folder in Settings.
 
-The gallery displays:
-- Preview thumbnails from each wallpaper's `preview` image
-- Wallpaper title and type badge (Video, Web, Scene)
-- Tag-based filtering (tags from `project.json`)
-- Search by wallpaper title
+- **Sidebar** — All, Favorites, Recent, then each wallpaper type and tag with counts
+- **Grid** — preview thumbnails; the active wallpaper is badged; ♡ toggles a favorite; right-click for Apply / Favorite / Show in Finder
+- **Inspector** — large preview, type, Workshop link, tags, description, **Apply**, and the wallpaper's settings. Settings of the active wallpaper apply live; others are saved and used when the wallpaper is applied.
 
-Click any wallpaper card to set it as your desktop background.
+Click a card to inspect it; double-click to set it as your desktop background. **Customize** in the menu bar popover opens the library on the active wallpaper.
 
 ### Installing Wallpapers
 
@@ -190,7 +188,8 @@ The app creates borderless, transparent `NSWindow` instances positioned at the d
 - **`CursorTracker`** — global mouse event monitor for interactive/parallax wallpapers
 - **`PerformanceMonitor`** — frame timing ring buffer and lifecycle event logger
 - **`PackageParser`** — extracts Wallpaper Engine `.pkg` archives
-- **`GalleryView`** — SwiftUI grid browser for installed wallpapers
+- **`GalleryView`** / **`LibraryInspector`** — SwiftUI wallpaper library (sidebar, grid, inspector with properties)
+- **`AppModel`** / **`MenuBarPopover`** / **`SettingsView`** — app state, menu bar popover and settings window
 
 ## License
 

@@ -1,307 +1,363 @@
+import AppKit
 import ImageIO
 import SwiftUI
 
-/// Main gallery view displaying a grid of installed wallpapers
-/// with search, tag filtering, type filtering, and sort controls.
+/// The wallpaper library: sidebar filters, a grid of wallpapers and an
+/// inspector with details, Apply and the selected wallpaper's properties.
 struct GalleryView: View {
-    @ObservedObject var viewModel: GalleryViewModel
+    @ObservedObject var library: GalleryViewModel
+    let appModel: AppModel
+    @State private var showsInspector = true
 
-    private let columns = [GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)]
+    private let columns = [GridItem(.adaptive(minimum: 190, maximum: 280), spacing: 16)]
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Filter bar (type chips + tag chips)
-            if !viewModel.allTags.isEmpty || viewModel.availableTypes.count > 1 {
-                filterBar
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.bar)
-                Divider()
-            }
-
-            // Wallpaper grid
-            if viewModel.isScanning {
-                Spacer()
-                ProgressView("Scanning wallpapers…")
-                Spacer()
-            } else if viewModel.wallpapers.isEmpty {
-                emptyLibrary
-            } else if viewModel.filteredWallpapers.isEmpty {
-                Spacer()
-                Text("No wallpapers match filters")
-                    .foregroundStyle(.secondary)
-                    .font(.title3)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(viewModel.filteredWallpapers, id: \.directoryURL) { wallpaper in
-                            WallpaperCard(
-                                wallpaper: wallpaper,
-                                isLoading: wallpaper.directoryURL != nil && viewModel.loadingURL == wallpaper.directoryURL
-                            ) {
-                                if let dirURL = wallpaper.directoryURL {
-                                    viewModel.select(dirURL)
-                                }
-                            }
-                        }
-                    }
-                    .padding(16)
+        NavigationSplitView {
+            LibrarySidebar(library: library)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
+        } detail: {
+            content
+                .inspector(isPresented: $showsInspector) {
+                    inspector
+                        .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
                 }
-            }
         }
-        .searchable(text: $viewModel.searchText, prompt: "Search wallpapers")
+        .searchable(text: $library.searchText, prompt: "Search wallpapers")
+        .navigationTitle(title)
+        .navigationSubtitle(subtitle)
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 sortMenu
-            }
-            ToolbarItem(placement: .automatic) {
                 Button {
-                    viewModel.onChooseFolder?()
+                    appModel.rescanLibrary()
                 } label: {
-                    Label("Choose Folder…", systemImage: "folder")
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .help(folderHelp)
+                .help("Rescan the library folders")
+                .disabled(library.isScanning)
+                Button {
+                    showsInspector.toggle()
+                } label: {
+                    Label("Inspector", systemImage: "sidebar.right")
+                }
+                .help(showsInspector ? "Hide details" : "Show details")
             }
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 820, minHeight: 480)
     }
 
-    private var folderHelp: String {
-        let paths = viewModel.scannedDirectories.map { ($0.path as NSString).abbreviatingWithTildeInPath }
-        return paths.isEmpty ? "Choose wallpaper folder" : "Scanning: " + paths.joined(separator: ", ")
+    private var title: String {
+        switch library.filter {
+        case .all: return "All Wallpapers"
+        case .favorites: return "Favorites"
+        case .recent: return "Recent"
+        case .type(let type): return type.displayName
+        case .tag(let tag): return tag.capitalized
+        }
+    }
+
+    private var subtitle: String {
+        if library.isScanning && library.wallpapers.isEmpty { return "Scanning…" }
+        let count = library.filteredWallpapers.count
+        return count == 1 ? "1 wallpaper" : "\(count) wallpapers"
+    }
+
+    // MARK: Content
+
+    @ViewBuilder
+    private var content: some View {
+        let wallpapers = library.filteredWallpapers
+        if library.isScanning && library.wallpapers.isEmpty {
+            ProgressView("Scanning wallpapers…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if library.wallpapers.isEmpty {
+            emptyLibrary
+        } else if wallpapers.isEmpty {
+            ContentUnavailableView {
+                Label(emptyFilterTitle, systemImage: emptyFilterIcon)
+            } description: {
+                Text(emptyFilterMessage)
+            }
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 16) {
+                    ForEach(wallpapers, id: \.libraryPath) { wallpaper in
+                        card(for: wallpaper)
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color(nsColor: .underPageBackgroundColor))
+        }
+    }
+
+    private func card(for wallpaper: WallpaperProject) -> some View {
+        let path = wallpaper.libraryPath
+        return WallpaperCard(
+            wallpaper: wallpaper,
+            isSelected: path != nil && path == library.selectedPath,
+            isActive: path != nil && path == appModel.snapshot.directoryPath,
+            isLoading: appModel.loadingName != nil && appModel.loadingName == wallpaper.directoryURL?.lastPathComponent,
+            isFavorite: library.isFavorite(wallpaper),
+            onSelect: { library.selectedPath = path },
+            onApply: { apply(wallpaper) },
+            onToggleFavorite: { library.toggleFavorite(wallpaper) }
+        )
+    }
+
+    private func apply(_ wallpaper: WallpaperProject) {
+        guard let url = wallpaper.directoryURL else { return }
+        library.selectedPath = wallpaper.libraryPath
+        Task { await appModel.load(url) }
+    }
+
+    private var emptyFilterTitle: String {
+        if !library.searchText.isEmpty { return "No Results" }
+        switch library.filter {
+        case .favorites: return "No Favorites Yet"
+        case .recent: return "Nothing Recent"
+        default: return "No Wallpapers"
+        }
+    }
+
+    private var emptyFilterIcon: String {
+        switch library.filter {
+        case .favorites: return "heart"
+        case .recent: return "clock"
+        default: return "magnifyingglass"
+        }
+    }
+
+    private var emptyFilterMessage: String {
+        if !library.searchText.isEmpty { return "No wallpapers here match “\(library.searchText)”." }
+        switch library.filter {
+        case .favorites: return "Click the heart on a wallpaper to keep it here."
+        case .recent: return "Wallpapers you apply will show up here."
+        default: return "Nothing in the library matches this filter."
+        }
     }
 
     private var emptyLibrary: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("No wallpapers found")
-                .font(.title3)
-            Group {
-                if viewModel.scannedDirectories.isEmpty {
-                    Text("Neither ~/Wallpaper Projects nor the Steam Workshop folder exists.")
-                } else {
-                    Text("Looked in " + viewModel.scannedDirectories
-                        .map { ($0.path as NSString).abbreviatingWithTildeInPath }
-                        .joined(separator: " and "))
-                }
+        ContentUnavailableView {
+            Label("No Wallpapers Found", systemImage: "photo.on.rectangle.angled")
+        } description: {
+            if library.scannedDirectories.isEmpty {
+                Text("Neither ~/Wallpaper Projects nor the Steam Workshop folder exists.")
+            } else {
+                Text("Looked in " + library.scannedDirectories
+                    .map { ($0.path as NSString).abbreviatingWithTildeInPath }
+                    .joined(separator: " and "))
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            Button("Choose Folder…") { viewModel.onChooseFolder?() }
+        } actions: {
+            Button("Choose Folder…") { appModel.chooseLibraryFolder() }
                 .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            Spacer()
         }
-        .padding(24)
-        .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Sort Menu
+    // MARK: Inspector
+
+    @ViewBuilder
+    private var inspector: some View {
+        if let wallpaper = selectedWallpaper {
+            LibraryInspector(wallpaper: wallpaper, library: library, appModel: appModel)
+                .id(wallpaper.libraryPath)
+        } else {
+            ContentUnavailableView("No Selection", systemImage: "sidebar.right",
+                                   description: Text("Select a wallpaper to see its details and settings. Double-click to apply it."))
+        }
+    }
+
+    /// The selected library item, or the active wallpaper when it was opened
+    /// from outside the library folders.
+    private var selectedWallpaper: WallpaperProject? {
+        if let wallpaper = library.selectedWallpaper { return wallpaper }
+        guard let path = library.selectedPath, path == appModel.snapshot.directoryPath else { return nil }
+        return appModel.windowManager.currentProject
+    }
+
+    // MARK: Sort Menu
 
     private var sortMenu: some View {
         Menu {
-            ForEach(GallerySortOrder.allCases, id: \.self) { order in
-                Button {
-                    viewModel.sortOrder = order
-                } label: {
-                    if viewModel.sortOrder == order {
-                        Label(order.rawValue, systemImage: "checkmark")
-                    } else {
-                        Text(order.rawValue)
-                    }
+            Picker("Sort By", selection: $library.sortOrder) {
+                ForEach(GallerySortOrder.allCases, id: \.self) { order in
+                    Text(order.rawValue).tag(order)
                 }
             }
+            .pickerStyle(.inline)
         } label: {
             Label("Sort", systemImage: "arrow.up.arrow.down")
         }
+        .help("Sort wallpapers")
     }
+}
 
-    // MARK: - Filter Bar
-
-    private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Type chips (only when more than one type is present)
-            if viewModel.availableTypes.count > 1 {
-                typeFilterRow
-            }
-
-            // Tag chips
-            if !viewModel.allTags.isEmpty {
-                tagChipRow
-            }
-
-            // AND/OR toggle + Clear button
-            if !viewModel.selectedTags.isEmpty || viewModel.hasActiveFilters {
-                HStack(spacing: 8) {
-                    if !viewModel.selectedTags.isEmpty {
-                        Picker("", selection: $viewModel.tagFilterMode) {
-                            Text("Any tag").tag(TagFilterMode.any)
-                            Text("All tags").tag(TagFilterMode.all)
-                        }
-                        .pickerStyle(.segmented)
-                        .fixedSize()
-                    }
-
-                    Spacer()
-
-                    if viewModel.hasActiveFilters {
-                        Button("Clear") { viewModel.clearFilters() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    }
-                }
-            }
+extension WallpaperType {
+    var displayName: String {
+        switch self {
+        case .scene: return "Scenes"
+        case .video: return "Videos"
+        case .web: return "Web"
+        case .preset: return "Presets"
+        case .application: return "Applications"
         }
     }
 
-    private var typeFilterRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach([WallpaperType.video, .web, .scene], id: \.self) { type in
-                    if viewModel.availableTypes.contains(type) {
-                        TagChip(
-                            tag: type.rawValue.capitalized,
-                            count: nil,
-                            isSelected: viewModel.selectedTypes.contains(type)
-                        ) {
-                            viewModel.toggleType(type)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var tagChipRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(viewModel.allTags, id: \.self) { tag in
-                    TagChip(
-                        tag: tag,
-                        count: viewModel.tagCount(for: tag),
-                        isSelected: viewModel.selectedTags.contains(tag)
-                    ) {
-                        viewModel.toggleTag(tag)
-                    }
-                }
-            }
+    var symbolName: String {
+        switch self {
+        case .scene: return "cube.transparent"
+        case .video: return "film"
+        case .web: return "globe"
+        case .preset: return "slider.horizontal.below.square.filled.and.square"
+        case .application: return "app"
         }
     }
 }
 
-// MARK: - Tag Chip
+// MARK: - Sidebar
 
-private struct TagChip: View {
-    let tag: String
-    let count: Int?
-    let isSelected: Bool
-    let action: () -> Void
+private struct LibrarySidebar: View {
+    @ObservedObject var library: GalleryViewModel
+    @State private var showsTags = true
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Text(tag)
-                    .font(.caption)
-
-                if let count {
-                    Text("\(count)")
-                        .font(.caption2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(isSelected ? Color.white.opacity(0.25) : Color.secondary.opacity(0.15))
-                        .clipShape(Capsule())
+        List(selection: Binding<LibraryFilter?>(
+            get: { library.filter },
+            set: { if let filter = $0 { library.filter = filter } }
+        )) {
+            Section("Library") {
+                row("All Wallpapers", icon: "square.grid.2x2", filter: .all, count: library.wallpapers.count)
+                row("Favorites", icon: "heart", filter: .favorites, count: nil)
+                row("Recent", icon: "clock", filter: .recent, count: nil)
+            }
+            if library.availableTypes.count > 1 {
+                Section("Types") {
+                    ForEach(library.availableTypes, id: \.self) { type in
+                        row(type.displayName, icon: type.symbolName, filter: .type(type), count: library.count(for: type))
+                    }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.15))
-            .foregroundStyle(isSelected ? .white : .primary)
-            .clipShape(Capsule())
+            if !library.allTags.isEmpty {
+                Section("Tags", isExpanded: $showsTags) {
+                    ForEach(library.allTags, id: \.self) { tag in
+                        row(tag.capitalized, icon: "tag", filter: .tag(tag), count: library.tagCount(for: tag))
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
+        .listStyle(.sidebar)
+    }
+
+    private func row(_ title: String, icon: String, filter: LibraryFilter, count: Int?) -> some View {
+        Label(title, systemImage: icon)
+            .badge(count ?? 0)
+            .tag(filter)
     }
 }
 
 // MARK: - Wallpaper Card
 
-private struct WallpaperCard: View {
+struct WallpaperCard: View {
     let wallpaper: WallpaperProject
+    let isSelected: Bool
+    let isActive: Bool
     let isLoading: Bool
-    let action: () -> Void
+    let isFavorite: Bool
+    let onSelect: () -> Void
+    let onApply: () -> Void
+    let onToggleFavorite: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                // Preview image
-                previewImage
-                    .frame(height: 140)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .overlay(alignment: .topTrailing) {
-                        typeBadge
-                    }
-                    .overlay {
-                        if isLoading {
-                            ZStack {
-                                Color.black.opacity(0.35)
-                                ProgressView().controlSize(.small)
-                            }
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .overlay { PreviewThumbnail(url: wallpaper.previewURL) }
+                .clipped()
+                .overlay(alignment: .topLeading) { favoriteButton }
+                .overlay(alignment: .topTrailing) { badges }
+                .overlay {
+                    if isLoading {
+                        ZStack {
+                            Color.black.opacity(0.35)
+                            ProgressView().controlSize(.small)
                         }
                     }
-
-                // Info
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(wallpaper.title)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    if let tags = wallpaper.tags, !tags.isEmpty {
-                        Text(tags.joined(separator: ", "))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
                 }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(wallpaper.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isHovered ? Color.accentColor : Color.clear, lineWidth: 2)
-            )
-            .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
-            .scaleEffect(isHovered ? 1.02 : 1.0)
-            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(isHovered ? 0.2 : 0.08),
+                              lineWidth: isSelected ? 3 : 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.18 : 0.08), radius: isHovered ? 6 : 2, y: 1)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
         .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .onTapGesture(count: 2, perform: onApply)
+        .simultaneousGesture(TapGesture().onEnded(onSelect))
+        .contextMenu {
+            Button(isActive ? "Reapply" : "Apply", action: onApply)
+            Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: onToggleFavorite)
+            if let url = wallpaper.directoryURL {
+                Divider()
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: "Apply", onApply)
     }
 
-    private var previewImage: some View {
-        PreviewThumbnail(url: wallpaper.previewURL)
+    private var subtitle: String {
+        let tags = (wallpaper.tags ?? []).prefix(3).map(\.capitalized).joined(separator: ", ")
+        let type = wallpaper.type.rawValue.capitalized
+        return tags.isEmpty ? type : "\(type) · \(tags)"
     }
 
-    private var typeBadge: some View {
-        Text(wallpaper.type.rawValue.capitalized)
-            .font(.caption2)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(.ultraThinMaterial)
-            .clipShape(Capsule())
+    @ViewBuilder
+    private var favoriteButton: some View {
+        if isFavorite || isHovered {
+            Button(action: onToggleFavorite) {
+                Image(systemName: isFavorite ? "heart.fill" : "heart")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(isFavorite ? Color.pink : Color.white)
+                    .padding(6)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
             .padding(6)
+            .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
+        }
+    }
+
+    @ViewBuilder
+    private var badges: some View {
+        if isActive {
+            Label("Active", systemImage: "checkmark.circle.fill")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.accentColor, in: Capsule())
+                .foregroundStyle(.white)
+                .padding(6)
+        }
     }
 }
 

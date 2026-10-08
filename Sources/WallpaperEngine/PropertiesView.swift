@@ -56,61 +56,29 @@ final class PropertyStore: ObservableObject {
     }
 }
 
-// MARK: - Root View
+// MARK: - Sections
 
-struct PropertiesView: View {
+/// The property controls for one wallpaper, as `Section`s for use inside a `Form`.
+/// Group headers collapse; rows whose `condition` fails are hidden.
+struct PropertySections: View {
     @ObservedObject var store: PropertyStore
     @State private var collapsedSections: Set<String> = []
 
     var body: some View {
-        VStack(spacing: 0) {
-            if store.properties.isEmpty {
-                emptyState
-            } else {
-                propertyForm
-            }
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Reset All") { store.resetToDefaults() }
-                    .disabled(!store.hasEditableProperties && store.onReset == nil)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
-        .frame(minWidth: 380, idealWidth: 440, minHeight: 200)
-    }
-
-    private var emptyState: some View {
-        VStack {
-            Spacer()
-            Text("No configurable properties")
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-    }
-
-    private var propertyForm: some View {
-        Form {
-            ForEach(store.sections) { section in
-                let visible = section.items.filter(store.isVisible)
-                if !visible.isEmpty {
-                    if let header = section.header, store.isVisible(header) {
-                        Section(isExpanded: expansion(for: section.id)) {
-                            rows(visible)
-                        } header: {
-                            Text(header.text)
-                        }
-                    } else {
-                        Section { rows(visible) }
+        ForEach(store.sections) { section in
+            let visible = section.items.filter(store.isVisible)
+            if !visible.isEmpty {
+                if let header = section.header, store.isVisible(header) {
+                    Section(isExpanded: expansion(for: section.id)) {
+                        rows(visible)
+                    } header: {
+                        Text(PropertyLayout.labelText(header.text).map { String($0.characters) } ?? header.key)
                     }
+                } else {
+                    Section { rows(visible) }
                 }
             }
         }
-        .formStyle(.grouped)
-        .animation(.default, value: store.values)
     }
 
     @ViewBuilder
@@ -342,69 +310,5 @@ private struct FileControl: View {
         if !path.isEmpty { panel.directoryURL = URL(fileURLWithPath: path).deletingLastPathComponent() }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         store.set(url.path, for: prop.key)
-    }
-}
-
-// MARK: - Window Controller
-
-/// Manages the floating properties panel. Owned by AppDelegate.
-@MainActor
-final class PropertiesWindowController: NSObject, NSWindowDelegate {
-    private var panel: NSPanel?
-    private var holdsActivation = false
-
-    /// Show (or update) the properties panel for the current wallpaper.
-    func show(title: String,
-              properties: [WallpaperProperty],
-              values: [String: String],
-              onChange: @escaping (String, String) -> Void,
-              onReset: (() -> Bool)? = nil) {
-        let store = PropertyStore(properties: properties, values: values, onChange: onChange, onReset: onReset)
-        let rootView = PropertiesView(store: store)
-        let vc = NSHostingController(rootView: rootView)
-
-        if let existing = panel {
-            existing.title = "Properties — \(title)"
-            existing.contentViewController = vc
-            acquireActivation()
-            existing.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
-            styleMask:   [.titled, .closable, .resizable, .utilityWindow],
-            backing:     .buffered,
-            defer:       false
-        )
-        p.title              = "Properties — \(title)"
-        p.isFloatingPanel    = true
-        p.hidesOnDeactivate  = false
-        p.isReleasedWhenClosed = false
-        p.contentViewController = vc
-        p.delegate = self
-        p.center()
-
-        self.panel = p
-        acquireActivation()
-        p.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    func close() {
-        panel?.close()
-    }
-
-    private func acquireActivation() {
-        guard !holdsActivation else { return }
-        holdsActivation = true
-        AppActivation.windowDidOpen()
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        guard holdsActivation else { return }
-        holdsActivation = false
-        AppActivation.windowDidClose()
     }
 }

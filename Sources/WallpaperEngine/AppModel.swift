@@ -43,7 +43,8 @@ final class AppModel {
     @ObservationIgnored private let recentStore = RecentWallpapers()
     @ObservationIgnored private let loginItem = LoginItem()
     @ObservationIgnored private let galleryController = GalleryWindowController()
-    @ObservationIgnored private var propertiesController: PropertiesWindowController?
+    /// Kept across library window closes so reopening doesn't rescan.
+    @ObservationIgnored let library = GalleryViewModel()
     @ObservationIgnored private var settingsController: SettingsWindowController?
     @ObservationIgnored private var refreshTimer: Timer?
     @ObservationIgnored private var refreshClients = 0
@@ -51,6 +52,7 @@ final class AppModel {
     init(windowManager: DesktopWindowManager) {
         self.windowManager = windowManager
         refresh()
+        library.recentPaths = { [weak self] in self?.recents.map(\.path) ?? [] }
     }
 
     // MARK: - State
@@ -129,7 +131,6 @@ final class AppModel {
         } catch {
             if reportsErrors { presentLoadError(error, for: url) }
         }
-        refreshPropertiesWindowIfNeeded()
     }
 
     func chooseWallpaperFile() {
@@ -171,7 +172,6 @@ final class AppModel {
     func clearWallpaper() {
         windowManager.clearWallpaper()
         recentStore.forgetLast()
-        propertiesController?.close()
         refresh()
     }
 
@@ -194,39 +194,51 @@ final class AppModel {
 
     // MARK: - Windows
 
-    func openGallery() {
-        galleryController.showGallery { [weak self] url in
-            await self?.load(url)
+    /// Open the library, optionally selecting a wallpaper by `libraryPath`.
+    func openLibrary(selecting path: String? = nil) {
+        if let path { library.selectedPath = path }
+        if !library.hasScanned || library.scannedDirectories != LibraryFolders.directories {
+            rescanLibrary()
         }
+        galleryController.show(library: library, appModel: self)
     }
 
-    func openProperties() {
-        guard let title = windowManager.currentTitle else { return }
-        if propertiesController == nil { propertiesController = PropertiesWindowController() }
-        showProperties(title: title)
+    /// Show the current wallpaper's details and properties.
+    func customizeCurrentWallpaper() {
+        openLibrary(selecting: snapshot.directoryPath)
     }
 
-    /// If the properties panel is open, update it for the newly loaded wallpaper.
-    /// Keep Reset available for scene storage even without authored properties.
-    private func refreshPropertiesWindowIfNeeded() {
-        guard propertiesController != nil else { return }
-        if let title = windowManager.currentTitle {
-            showProperties(title: title)
-        } else {
-            propertiesController?.close()
+    func rescanLibrary() {
+        library.scan(directories: LibraryFolders.directories)
+    }
+
+    /// Properties of the active wallpaper apply live and persist through the
+    /// window manager; any other wallpaper's are saved for when it is applied.
+    func makePropertyStore(for project: WallpaperProject, isActive: Bool) -> PropertyStore {
+        if isActive {
+            return PropertyStore(
+                properties: windowManager.currentProperties,
+                values: windowManager.currentPropertyValues,
+                onChange: { [weak self] key, value in
+                    self?.windowManager.applyProperty(key: key, value: value)
+                },
+                onReset: { [weak self] in
+                    self?.windowManager.resetProperties() ?? false
+                }
+            )
         }
-    }
-
-    private func showProperties(title: String) {
-        propertiesController?.show(
-            title: title,
-            properties: windowManager.currentProperties,
-            values: windowManager.currentPropertyValues,
-            onChange: { [weak self] key, value in
-                self?.windowManager.applyProperty(key: key, value: value)
+        let key = DesktopWindowManager.propertyStorageKey(for: project)
+        return PropertyStore(
+            properties: project.resolvedProperties,
+            values: DesktopWindowManager.loadPropertyValues(for: project),
+            onChange: { changedKey, value in
+                var saved = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+                saved[changedKey] = value
+                UserDefaults.standard.set(saved, forKey: key)
             },
-            onReset: { [weak self] in
-                self?.windowManager.resetProperties() ?? false
+            onReset: {
+                UserDefaults.standard.removeObject(forKey: key)
+                return true
             }
         )
     }
@@ -240,13 +252,13 @@ final class AppModel {
 
     func chooseLibraryFolder() {
         guard LibraryFolders.chooseCustomFolder() else { return }
-        galleryController.rescan()
+        rescanLibrary()
         refresh()
     }
 
     func useDefaultLibraryFolders() {
         LibraryFolders.useDefaults()
-        galleryController.rescan()
+        rescanLibrary()
         refresh()
     }
 

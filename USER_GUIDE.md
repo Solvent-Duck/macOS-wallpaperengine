@@ -260,18 +260,20 @@ Once the app is running:
 
 1. Click the **menu bar icon**
 2. Click **Browse Wallpapers…**
-3. The gallery should open
-4. Click any wallpaper to apply it
+3. The Wallpaper Library window opens
+4. Click a wallpaper to see its details on the right, then click **Apply** — or just double-click it
 
-The gallery scans your `~/Wallpaper Projects/` folder and Steam's Workshop folder automatically.
-To use a different folder, click **Choose Folder…** in the gallery toolbar or in Settings.
+The library scans your `~/Wallpaper Projects/` folder and Steam's Workshop folder automatically.
+To use a different folder, go to **Settings → General → Choose Folder…**. Click the ↻ button to rescan after adding wallpapers.
 
 You can also:
 - Search by wallpaper name
-- Filter by tags (AND/OR logic)
-- Filter by type (video, web, scene)
-- Sort by title or type
-- Click a wallpaper card to set it
+- Use the sidebar to show Favorites, Recent wallpapers, one type (scene, video, web) or one tag
+- Click the ♡ on a wallpaper to add it to Favorites
+- Sort by title, type or number of tags
+- Right-click a wallpaper to apply it, favorite it or show it in Finder
+
+The wallpaper that is on your desktop right now is marked **Active**.
 
 ---
 
@@ -280,19 +282,19 @@ You can also:
 Many wallpapers expose settings — colours, speeds, toggles, and other options.
 
 To access them:
-1. Load a wallpaper
-2. Click the **menu bar icon**
-3. Click **Customize**
+1. Click the **menu bar icon**
+2. Click **Customize** — or select any wallpaper in the Wallpaper Library
 
-A floating panel will open with controls specific to that wallpaper, grouped into sections.
+The settings appear on the right side of the library, under the wallpaper's details, grouped into sections.
 Some controls only appear once you turn on the option they belong to.
-Changes take effect immediately.
+Changes to the wallpaper on your desktop take effect immediately.
+You can also change a wallpaper's settings before applying it; they are used when you apply it.
 Settings are saved per wallpaper — each wallpaper remembers its own values.
 
 To undo one change, click the ↺ arrow next to it (or right-click it and choose **Reset to Default**).
-To go back to all the original settings, click **Reset All** at the bottom of the panel.
+To go back to all the original settings, click **Reset All** at the bottom of the settings.
 
-Not all wallpapers have properties; those show "No configurable properties".
+Not all wallpapers have properties; those show "This wallpaper has no settings".
 
 ---
 
@@ -456,7 +458,7 @@ There is no normal app window at startup.
 
 ---
 
-### Problem: the gallery is empty
+### Problem: the wallpaper library is empty
 Check these things:
 
 1. Your wallpapers are inside:

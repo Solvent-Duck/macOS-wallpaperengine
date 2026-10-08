@@ -8,69 +8,68 @@ enum GallerySortOrder: String, CaseIterable {
     case tagCount        = "Most Tags"
 }
 
-enum TagFilterMode: String {
-    case any  // OR — wallpaper must match at least one selected tag
-    case all  // AND — wallpaper must match every selected tag
+/// What the library sidebar shows.
+enum LibraryFilter: Hashable {
+    case all, favorites, recent
+    case type(WallpaperType)
+    case tag(String)
 }
 
-/// Scans a directory for Wallpaper Engine projects and provides
-/// filtering for the gallery UI.
-class GalleryViewModel: ObservableObject, @unchecked Sendable {
-    @Published var wallpapers: [WallpaperProject] = []
-    @Published var allTags: [String] = []
-    @Published var selectedTags: Set<String> = []
-    @Published var selectedTypes: Set<WallpaperType> = []
-    @Published var searchText: String = ""
-    @Published var isScanning = false
+/// Scans the library folders and provides filtering, favorites and selection
+/// for the library window. Kept alive across window closes so reopening the
+/// library doesn't rescan.
+@MainActor
+final class GalleryViewModel: ObservableObject {
+    private static let favoritesKey = "FavoriteWallpapers"
+
+    @Published private(set) var wallpapers: [WallpaperProject] = []
+    @Published private(set) var allTags: [String] = []
+    @Published private(set) var isScanning = false
     /// Folders included in the most recent scan; empty when none exist.
-    @Published var scannedDirectories: [URL] = []
-    /// The wallpaper currently being loaded, for a progress overlay.
-    @Published var loadingURL: URL?
+    @Published private(set) var scannedDirectories: [URL] = []
+    @Published var filter: LibraryFilter = .all
+    @Published var searchText: String = ""
+    /// `libraryPath` of the wallpaper shown in the inspector.
+    @Published var selectedPath: String?
+    /// Favorites are keyed by folder name, like saved properties, so copies share them.
+    @Published private(set) var favorites: Set<String>
 
     @Published var sortOrder: GallerySortOrder {
         didSet { UserDefaults.standard.set(sortOrder.rawValue, forKey: "gallery.sortOrder") }
     }
-    @Published var tagFilterMode: TagFilterMode {
-        didSet { UserDefaults.standard.set(tagFilterMode.rawValue, forKey: "gallery.tagFilterMode") }
-    }
 
-    let onSelect: @MainActor (URL) async -> Void
-    var onChooseFolder: (@MainActor () -> Void)?
+    private var tagCounts: [String: Int] = [:]
+    private var typeCounts: [WallpaperType: Int] = [:]
+    private var scanGeneration = 0
 
-    init(onSelect: @escaping @MainActor (URL) async -> Void) {
-        self.onSelect = onSelect
+    /// Recently applied wallpaper paths, newest first.
+    var recentPaths: () -> [String] = { [] }
 
-        let savedSort = UserDefaults.standard.string(forKey: "gallery.sortOrder")
+    init() {
+        sortOrder = UserDefaults.standard.string(forKey: "gallery.sortOrder")
             .flatMap(GallerySortOrder.init(rawValue:)) ?? .titleAscending
-        let savedMode = UserDefaults.standard.string(forKey: "gallery.tagFilterMode")
-            .flatMap(TagFilterMode.init(rawValue:)) ?? .any
-
-        self.sortOrder = savedSort
-        self.tagFilterMode = savedMode
+        favorites = Set(UserDefaults.standard.stringArray(forKey: Self.favoritesKey) ?? [])
     }
+
+    var hasScanned: Bool { !scannedDirectories.isEmpty || !wallpapers.isEmpty }
 
     var filteredWallpapers: [WallpaperProject] {
-        let filtered = wallpapers.filter { wp in
-            let matchesSearch = searchText.isEmpty
-                || wp.title.localizedCaseInsensitiveContains(searchText)
-
-            let matchesType = selectedTypes.isEmpty
-                || selectedTypes.contains(wp.type)
-
-            let wpTags = wp.tags ?? []
-            let matchesTags: Bool
-            if selectedTags.isEmpty {
-                matchesTags = true
-            } else if tagFilterMode == .any {
-                matchesTags = selectedTags.contains(where: wpTags.contains)
-            } else {
-                matchesTags = selectedTags.allSatisfy(wpTags.contains)
+        let recents = recentPaths()
+        let matching = wallpapers.filter { wallpaper in
+            guard searchText.isEmpty || wallpaper.title.localizedCaseInsensitiveContains(searchText) else { return false }
+            switch filter {
+            case .all: return true
+            case .favorites: return isFavorite(wallpaper)
+            case .recent: return wallpaper.libraryPath.map(recents.contains) ?? false
+            case .type(let type): return wallpaper.type == type
+            case .tag(let tag): return wallpaper.tags?.contains(tag) ?? false
             }
-
-            return matchesSearch && matchesType && matchesTags
         }
-
-        return filtered.sorted { a, b in
+        if filter == .recent {
+            let rank = Dictionary(recents.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+            return matching.sorted { (rank[$0.libraryPath ?? ""] ?? .max) < (rank[$1.libraryPath ?? ""] ?? .max) }
+        }
+        return matching.sorted { a, b in
             switch sortOrder {
             case .titleAscending:
                 return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
@@ -87,47 +86,27 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
-    var availableTypes: Set<WallpaperType> {
-        Set(wallpapers.map(\.type))
+    /// Types present in the library, in a fixed display order.
+    var availableTypes: [WallpaperType] {
+        [.scene, .video, .web, .preset].filter { typeCounts[$0, default: 0] > 0 }
     }
 
-    var hasActiveFilters: Bool {
-        !selectedTags.isEmpty || !selectedTypes.isEmpty
+    func count(for type: WallpaperType) -> Int { typeCounts[type, default: 0] }
+    func tagCount(for tag: String) -> Int { tagCounts[tag, default: 0] }
+
+    var selectedWallpaper: WallpaperProject? {
+        guard let selectedPath else { return nil }
+        return wallpapers.first { $0.libraryPath == selectedPath }
     }
 
-    func tagCount(for tag: String) -> Int {
-        wallpapers.filter { $0.tags?.contains(tag) ?? false }.count
+    func isFavorite(_ wallpaper: WallpaperProject) -> Bool {
+        wallpaper.directoryURL.map { favorites.contains($0.lastPathComponent) } ?? false
     }
 
-    func toggleTag(_ tag: String) {
-        if selectedTags.contains(tag) {
-            selectedTags.remove(tag)
-        } else {
-            selectedTags.insert(tag)
-        }
-    }
-
-    func toggleType(_ type: WallpaperType) {
-        if selectedTypes.contains(type) {
-            selectedTypes.remove(type)
-        } else {
-            selectedTypes.insert(type)
-        }
-    }
-
-    func clearFilters() {
-        selectedTags.removeAll()
-        selectedTypes.removeAll()
-    }
-
-    @MainActor
-    func select(_ url: URL) {
-        guard loadingURL == nil else { return }
-        loadingURL = url
-        Task { @MainActor in
-            await onSelect(url)
-            loadingURL = nil
-        }
+    func toggleFavorite(_ wallpaper: WallpaperProject) {
+        guard let name = wallpaper.directoryURL?.lastPathComponent else { return }
+        if favorites.contains(name) { favorites.remove(name) } else { favorites.insert(name) }
+        UserDefaults.standard.set(favorites.sorted(), forKey: Self.favoritesKey)
     }
 
     /// Scan each directory's immediate subfolders. A wallpaper folder name that
@@ -135,30 +114,35 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
     func scan(directories: [URL]) {
         isScanning = true
         scannedDirectories = directories
+        scanGeneration += 1
+        let generation = scanGeneration
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var projects: [WallpaperProject] = []
-            var seenNames = Set<String>()
-            for directory in directories {
-                projects += Self.scanProjects(in: directory, skipping: &seenNames)
-            }
-
-            var tagSet = Set<String>()
-            for project in projects {
-                for tag in project.tags ?? [] {
-                    tagSet.insert(tag)
+        Task {
+            let projects = await Task.detached(priority: .userInitiated) {
+                var projects: [WallpaperProject] = []
+                var seenNames = Set<String>()
+                for directory in directories {
+                    projects += Self.scanProjects(in: directory, skipping: &seenNames)
                 }
-            }
+                return projects
+            }.value
+            guard generation == scanGeneration else { return }
 
-            DispatchQueue.main.async {
-                self?.wallpapers = projects
-                self?.allTags = tagSet.sorted()
-                self?.isScanning = false
+            var tagCounts: [String: Int] = [:]
+            var typeCounts: [WallpaperType: Int] = [:]
+            for project in projects {
+                typeCounts[project.type, default: 0] += 1
+                for tag in Set(project.tags ?? []) { tagCounts[tag, default: 0] += 1 }
             }
+            self.tagCounts = tagCounts
+            self.typeCounts = typeCounts
+            wallpapers = projects
+            allTags = tagCounts.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            isScanning = false
         }
     }
 
-    static func scanProjects(in directory: URL, skipping seenNames: inout Set<String>) -> [WallpaperProject] {
+    nonisolated static func scanProjects(in directory: URL, skipping seenNames: inout Set<String>) -> [WallpaperProject] {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -170,7 +154,7 @@ class GalleryViewModel: ObservableObject, @unchecked Sendable {
             let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             guard isDir, !seenNames.contains(itemURL.lastPathComponent) else { continue }
 
-            if let project = try? WallpaperLoader.load(from: itemURL) {
+            if let project = try? WallpaperLoader.load(from: itemURL, metadataOnly: true) {
                 seenNames.insert(itemURL.lastPathComponent)
                 projects.append(project)
             }

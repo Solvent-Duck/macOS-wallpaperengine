@@ -1,14 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Manages the gallery window lifecycle, bridging SwiftUI into
+/// Manages the library window lifecycle, bridging SwiftUI into
 /// the AppKit-based menu bar app.
 @MainActor
 class GalleryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
-    private var viewModel: GalleryViewModel?
 
-    func showGallery(onSelect: @escaping @MainActor (URL) async -> Void) {
+    func show(library: GalleryViewModel, appModel: AppModel) {
         // If already open, bring to front
         if let existing = window, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
@@ -16,19 +15,17 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let vm = GalleryViewModel(onSelect: onSelect)
-        vm.onChooseFolder = { [weak self] in self?.chooseFolder() }
-        self.viewModel = vm
-
-        let galleryView = GalleryView(viewModel: vm)
-        let hostingController = NSHostingController(rootView: galleryView)
+        let hostingController = NSHostingController(rootView: GalleryView(library: library, appModel: appModel))
+        hostingController.sceneBridgingOptions = [.title, .toolbars]
 
         let win = NSWindow(contentViewController: hostingController)
-        win.title = "Wallpaper Gallery"
-        win.setContentSize(NSSize(width: 900, height: 600))
-        win.styleMask = [.titled, .closable, .resizable, .miniaturizable]
-        win.minSize = NSSize(width: 500, height: 400)
-        win.center()
+        win.title = "Wallpaper Library"
+        win.styleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
+        win.toolbarStyle = .unified
+        win.setContentSize(NSSize(width: 1180, height: 720))
+        win.minSize = NSSize(width: 820, height: 480)
+        win.setFrameAutosaveName("WallpaperLibrary")
+        if !win.setFrameUsingName("WallpaperLibrary") { win.center() }
         win.delegate = self
         win.isReleasedWhenClosed = false
 
@@ -36,28 +33,20 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
 
         // Switch to regular app so the window is focusable
         AppActivation.windowDidOpen()
+        appModel.beginLiveUpdates()
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        // Scan for wallpapers
-        vm.scan(directories: LibraryFolders.directories)
+        liveUpdatesModel = appModel
     }
 
-    func rescan() {
-        viewModel?.scan(directories: LibraryFolders.directories)
-    }
-
-    private func chooseFolder() {
-        guard let window, LibraryFolders.chooseCustomFolder() else { return }
-        window.makeKeyAndOrderFront(nil)
-        rescan()
-    }
+    private weak var liveUpdatesModel: AppModel?
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
         window = nil
-        viewModel = nil
+        liveUpdatesModel?.endLiveUpdates()
+        liveUpdatesModel = nil
         // Revert to menu bar-only accessory app unless another window is open
         AppActivation.windowDidClose()
     }

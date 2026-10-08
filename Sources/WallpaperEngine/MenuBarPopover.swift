@@ -143,7 +143,7 @@ struct MenuBarPopover: View {
             .disabled(!snapshot.supportsAudio)
             Button {
                 dismiss()
-                model.openProperties()
+                model.customizeCurrentWallpaper()
             } label: {
                 Label("Customize", systemImage: "slider.horizontal.3")
                     .frame(maxWidth: .infinity)
@@ -179,7 +179,7 @@ struct MenuBarPopover: View {
         HStack(spacing: 8) {
             Button {
                 dismiss()
-                model.openGallery()
+                model.openLibrary()
             } label: {
                 Label("Browse Wallpapers…", systemImage: "square.grid.2x2")
                     .frame(maxWidth: .infinity)
@@ -231,8 +231,9 @@ private struct RecentTile: View {
 
     var body: some View {
         Button(action: action) {
-            PreviewThumbnail(url: recent.previewURL)
+            Color.clear
                 .aspectRatio(16 / 9, contentMode: .fit)
+                .overlay { PreviewThumbnail(url: recent.previewURL) }
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 .overlay(
                     RoundedRectangle(cornerRadius: 5)

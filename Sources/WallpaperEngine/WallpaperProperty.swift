@@ -2,7 +2,7 @@ import Foundation
 import NativeSceneCore
 
 /// Property types defined in Wallpaper Engine's project.json schema.
-enum WEPropertyType: String {
+enum WEPropertyType: String, Sendable {
     case slider
     case bool
     case color
@@ -33,7 +33,7 @@ enum WEPropertyType: String {
 }
 
 /// A selectable option for a `combo` property.
-struct WEPropertyOption: Equatable {
+struct WEPropertyOption: Equatable, Sendable {
     let value: String
     let label: String
 }
@@ -46,7 +46,7 @@ struct WEPropertyOption: Equatable {
 /// - `color`     — space-separated 0–1 floats, e.g. `"1 0.5 0.2"`
 /// - `combo`     — the option's value key, e.g. `"mode_a"`
 /// - `textinput` — the raw string
-struct WallpaperProperty: Identifiable {
+struct WallpaperProperty: Identifiable, Sendable {
     var id: String { key }
 
     let key: String

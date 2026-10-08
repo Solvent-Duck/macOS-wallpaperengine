@@ -10,8 +10,8 @@ import Foundation
 ///
 /// Conditions that fail to parse are treated as always visible, so a control is
 /// never hidden because of an expression this evaluator doesn't understand.
-struct PropertyCondition: Equatable {
-    indirect enum Expression: Equatable {
+struct PropertyCondition: Equatable, Sendable {
+    indirect enum Expression: Equatable, Sendable {
         case literal(Value)
         /// `name.value`, or a bare `name` (authors occasionally omit `.value`).
         case property(String)
@@ -21,11 +21,11 @@ struct PropertyCondition: Equatable {
         case compare(Expression, Comparison, Expression)
     }
 
-    enum Comparison: Equatable {
+    enum Comparison: Equatable, Sendable {
         case equal, notEqual, less, lessOrEqual, greater, greaterOrEqual
     }
 
-    enum Value: Equatable {
+    enum Value: Equatable, Sendable {
         case bool(Bool)
         case number(Double)
         case string(String)
