@@ -41,9 +41,18 @@ final class AppModel {
         get { access(keyPath: \.workshopSyncEnabled); return WorkshopSyncSettings.isEnabled }
         set {
             withMutation(keyPath: \.workshopSyncEnabled) { WorkshopSyncSettings.isEnabled = newValue }
+            workshopSync.downloadsSubscriptions = newValue
             if newValue { workshopSync.sync() } else { workshopSync.stop() }
         }
     }
+
+    /// Which content ratings the Workshop browser shows.
+    var workshopRatingLevel: Int {
+        get { access(keyPath: \.workshopRatingLevel); return WorkshopSyncSettings.ratingLevel }
+        set { withMutation(keyPath: \.workshopRatingLevel) { WorkshopSyncSettings.ratingLevel = newValue } }
+    }
+
+    var settingsPane: SettingsView.Pane = .general
 
     /// The Steamworks SDK folder holding `libsteam_api.dylib`.
     var steamworksSDKFolder: URL {
@@ -77,6 +86,7 @@ final class AppModel {
         self.windowManager = windowManager
         refresh()
         library.recentPaths = { [weak self] in self?.recents.map(\.path) ?? [] }
+        workshopSync.downloadsSubscriptions = WorkshopSyncSettings.isEnabled
     }
 
     // MARK: - State
@@ -386,7 +396,8 @@ final class AppModel {
         )
     }
 
-    func openSettings() {
+    func openSettings(pane: SettingsView.Pane? = nil) {
+        if let pane { settingsPane = pane }
         if settingsController == nil { settingsController = SettingsWindowController(model: self) }
         settingsController?.show()
     }

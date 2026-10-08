@@ -232,7 +232,34 @@ Live check (2026-10-08, real Steam):
 - A Workshop update to the active item reloads it with its customizations intact.
 - Killing the helper process doesn't affect the running wallpaper.
 
-## Phase 3 — In-app Workshop browsing
+## Phase 3 — In-app Workshop browsing (done)
+
+Status (2026-10-08): committed on `workshop/steam-sync`.
+- **Helper:** a `browse` command (sort, trend window, type and rating tag groups, genre tag,
+  percent-encoded search text, paging). Results include description, votes, subscriber count
+  and this account's state for each item.
+- **`WorkshopSync`:**
+  - `search`/`loadMore`; stale answers are dropped by request number
+  - `subscribe`/`unsubscribe`, with `subscribedIDs` and `pendingSubscriptionChanges`
+  - `beginBrowsing`/`endBrowsing` keep the session open while the browser is visible
+  - `downloadsSubscriptions` gates automatic downloads; explicit subscribes always download
+- **UI:**
+  - a sidebar *Steam Workshop* section with Browse and Downloads
+  - `WorkshopBrowseView`: sort/type/genre pickers, the search field drives the text, infinite
+    scroll, arrow keys, Return/double-click to subscribe or apply
+  - `WorkshopItemInspector` for items not in the library; items already in the library get
+    the normal inspector
+  - Unsubscribe (with confirmation) in the library inspector for Steam's own copies
+  - a Settings → Steam Workshop → "Show in Browse" rating level, defaulting to Everyone
+
+How it differs from the plan:
+- **No author names.** Showing them needs `ISteamFriends` persona lookups, which aren't done.
+- **Type filter, not badges.** Browse only queries the Scene, Video and Web types this app
+  plays, so Application items never appear; there's no per-item compatibility badge.
+- **Subscribe/unsubscribe not run against the live account** (unit-tested only). Browsing was
+  checked live: filters respected, paging gave 100 unique items, and the session closed
+  after browsing ended.
+
 
 - A sidebar entry, *Steam Workshop → Browse*, replaces the grid with a remote grid built
   natively on `CreateQueryAllUGCRequest`:

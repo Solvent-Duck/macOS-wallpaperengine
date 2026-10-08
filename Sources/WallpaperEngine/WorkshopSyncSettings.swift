@@ -8,6 +8,15 @@ import SteamLibrary
 enum WorkshopSyncSettings {
     private static let enabledKey = "workshopSyncEnabled"
     private static let sdkFolderKey = "steamworksSDKFolder"
+    private static let ratingLevelKey = "workshopRatingLevel"
+
+    /// 0 = Everyone, 1 = adds Questionable, 2 = adds Mature.
+    static var ratingLevel: Int {
+        get { min(max(UserDefaults.standard.integer(forKey: ratingLevelKey), 0), WorkshopCatalog.ratings.count - 1) }
+        set { UserDefaults.standard.set(newValue, forKey: ratingLevelKey) }
+    }
+
+    static var allowedRatings: [String] { Array(WorkshopCatalog.ratings.prefix(ratingLevel + 1)) }
 
     static var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: enabledKey) }

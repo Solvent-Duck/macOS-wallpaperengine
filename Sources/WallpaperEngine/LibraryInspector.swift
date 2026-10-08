@@ -1,4 +1,5 @@
 import AppKit
+import SteamLibrary
 import SwiftUI
 
 /// Details, Apply and properties for the selected library wallpaper.
@@ -12,6 +13,7 @@ struct LibraryInspector: View {
     @ObservedObject var library: GalleryViewModel
     let appModel: AppModel
     @State private var fullProject: WallpaperProject?
+    @State private var confirmsUnsubscribe = false
 
     private var isActive: Bool {
         wallpaper.libraryPath != nil && wallpaper.libraryPath == appModel.snapshot.directoryPath
@@ -115,6 +117,32 @@ struct LibraryInspector: View {
                     .help("Show in Finder")
                     .accessibilityLabel("Show in Finder")
                 }
+
+                if let id = steamWorkshopID {
+                    Button {
+                        confirmsUnsubscribe = true
+                    } label: {
+                        if appModel.workshopSync.pendingSubscriptionChanges.contains(id) {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "minus.circle")
+                        }
+                    }
+                    .controlSize(.large)
+                    .disabled(appModel.workshopSync.pendingSubscriptionChanges.contains(id))
+                    .help("Unsubscribe on Steam")
+                    .accessibilityLabel("Unsubscribe on Steam")
+                    .confirmationDialog("Unsubscribe from “\(wallpaper.title)”?", isPresented: $confirmsUnsubscribe) {
+                        Button("Unsubscribe", role: .destructive) { appModel.workshopSync.unsubscribe(id) }
+                    } message: {
+                        Text(isActive
+                             ? "Steam removes its files, and the desktop wallpaper is cleared."
+                             : "Steam removes its files from this Mac.")
+                    }
+                }
+            }
+            if let error = appModel.workshopSync.lastSubscriptionError, steamWorkshopID != nil {
+                Text(error).font(.caption).foregroundStyle(.red)
             }
 
             if let tags = wallpaper.tags, !tags.isEmpty {
@@ -132,6 +160,15 @@ struct LibraryInspector: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// The Workshop ID when this wallpaper is Steam's own copy (inside a
+    /// Workshop content folder), which unsubscribing would remove.
+    private var steamWorkshopID: String? {
+        guard let id = workshopID,
+              wallpaper.directoryURL?.deletingLastPathComponent().path.hasSuffix("/workshop/content/\(wallpaperEngineAppID)") == true
+        else { return nil }
+        return id
     }
 
     private var workshopID: String? {

@@ -8,6 +8,8 @@
 //
 // Protocol: commands arrive on stdin, one per line:
 //   download <id> | subscribe <id> | unsubscribe <id> | details <id> [<id>...]
+//   browse request=<n> sort=<trend|popular|recent|subscribed> page=<n> days=<n>
+//          types=<A,B> ratings=<A,B> tag=<T> text=<percent-encoded>
 //   refresh | quit
 // Events go to stdout as one JSON object per line, each with an "event" key.
 // End of stdin (the app went away) also quits.
@@ -16,6 +18,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -65,6 +68,13 @@ struct SteamAPI {
     decltype(&SteamAPI_ISteamUGC_GetQueryUGCResult) GetQueryUGCResult;
     decltype(&SteamAPI_ISteamUGC_GetQueryUGCPreviewURL) GetQueryUGCPreviewURL;
     decltype(&SteamAPI_ISteamUGC_ReleaseQueryUGCRequest) ReleaseQueryUGCRequest;
+    decltype(&SteamAPI_ISteamUGC_CreateQueryAllUGCRequestPage) CreateQueryAllUGCRequestPage;
+    decltype(&SteamAPI_ISteamUGC_AddRequiredTag) AddRequiredTag;
+    decltype(&SteamAPI_ISteamUGC_AddRequiredTagGroup) AddRequiredTagGroup;
+    decltype(&SteamAPI_ISteamUGC_SetSearchText) SetSearchText;
+    decltype(&SteamAPI_ISteamUGC_SetRankedByTrendDays) SetRankedByTrendDays;
+    decltype(&SteamAPI_ISteamUGC_SetReturnLongDescription) SetReturnLongDescription;
+    decltype(&SteamAPI_ISteamUGC_GetQueryUGCStatistic) GetQueryUGCStatistic;
 };
 
 std::string loadError;
@@ -111,6 +121,13 @@ bool load(const char *path, SteamAPI &api) {
     RESOLVE(GetQueryUGCResult, SteamAPI_ISteamUGC_GetQueryUGCResult);
     RESOLVE(GetQueryUGCPreviewURL, SteamAPI_ISteamUGC_GetQueryUGCPreviewURL);
     RESOLVE(ReleaseQueryUGCRequest, SteamAPI_ISteamUGC_ReleaseQueryUGCRequest);
+    RESOLVE(CreateQueryAllUGCRequestPage, SteamAPI_ISteamUGC_CreateQueryAllUGCRequestPage);
+    RESOLVE(AddRequiredTag, SteamAPI_ISteamUGC_AddRequiredTag);
+    RESOLVE(AddRequiredTagGroup, SteamAPI_ISteamUGC_AddRequiredTagGroup);
+    RESOLVE(SetSearchText, SteamAPI_ISteamUGC_SetSearchText);
+    RESOLVE(SetRankedByTrendDays, SteamAPI_ISteamUGC_SetRankedByTrendDays);
+    RESOLVE(SetReturnLongDescription, SteamAPI_ISteamUGC_SetReturnLongDescription);
+    RESOLVE(GetQueryUGCStatistic, SteamAPI_ISteamUGC_GetQueryUGCStatistic);
 #undef RESOLVE
     return ok;
 }
@@ -152,6 +169,30 @@ void emit(const std::string &json) {
     exit(status);
 }
 
+/// Decode `%XX` escapes in a command value.
+std::string percentDecoded(const std::string &text) {
+    std::string out;
+    for (size_t i = 0; i < text.size(); i++) {
+        if (text[i] == '%' && i + 2 < text.size() && isxdigit(text[i + 1]) && isxdigit(text[i + 2])) {
+            out += static_cast<char>(std::stoi(text.substr(i + 1, 2), nullptr, 16));
+            i += 2;
+        } else {
+            out += text[i];
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> split(const std::string &text, char separator) {
+    std::vector<std::string> parts;
+    std::string part;
+    std::istringstream in(text);
+    while (std::getline(in, part, separator)) {
+        if (!part.empty()) parts.push_back(part);
+    }
+    return parts;
+}
+
 // MARK: - Commands from stdin
 
 std::mutex commandLock;
@@ -182,7 +223,12 @@ struct Session {
     ISteamUGC *ugc;
     HSteamPipe pipe;
     std::set<PublishedFileId_t> watched; // items whose progress is reported
-    std::map<SteamAPICall_t, std::pair<int, UGCQueryHandle_t>> pendingCalls; // call -> (expected callback, query)
+    struct PendingCall {
+        int expected;
+        UGCQueryHandle_t query;
+        long request; // browse request number, echoed back
+    };
+    std::map<SteamAPICall_t, PendingCall> pendingCalls;
 
     std::string itemJSON(PublishedFileId_t id) {
         uint32 state = api.GetItemState(ugc, id);
@@ -259,22 +305,97 @@ struct Session {
                 SteamAPICall_t call = subscribe ? api.SubscribeItem(ugc, id) : api.UnsubscribeItem(ugc, id);
                 int expected = subscribe ? RemoteStorageSubscribePublishedFileResult_t::k_iCallback
                                          : RemoteStorageUnsubscribePublishedFileResult_t::k_iCallback;
-                if (call != k_uAPICallInvalid) pendingCalls[call] = {expected, k_UGCQueryHandleInvalid};
+                if (call != k_uAPICallInvalid) pendingCalls[call] = {expected, k_UGCQueryHandleInvalid, -1};
             }
         } else if (verb == "details" && !ids.empty()) {
             UGCQueryHandle_t query = api.CreateQueryUGCDetailsRequest(ugc, ids.data(), static_cast<uint32>(ids.size()));
             SteamAPICall_t call = api.SendQueryUGCRequest(ugc, query);
-            if (call != k_uAPICallInvalid) pendingCalls[call] = {SteamUGCQueryCompleted_t::k_iCallback, query};
+            if (call != k_uAPICallInvalid) pendingCalls[call] = {SteamUGCQueryCompleted_t::k_iCallback, query, -1};
             else api.ReleaseQueryUGCRequest(ugc, query);
+        } else if (verb == "browse") {
+            browse(line);
         } else if (!verb.empty()) {
             emit("{\"event\":\"error\",\"code\":\"badCommand\",\"message\":" + quoted(line) + "}");
         }
     }
 
+    /// One page of the Workshop catalogue. Tag groups require at least one
+    /// tag from each group (e.g. a Scene, Video or Web item rated Everyone).
+    void browse(const std::string &line) {
+        std::map<std::string, std::string> options;
+        std::istringstream in(line);
+        std::string word;
+        in >> word; // "browse"
+        while (in >> word) {
+            auto equals = word.find('=');
+            if (equals != std::string::npos) options[word.substr(0, equals)] = percentDecoded(word.substr(equals + 1));
+        }
+        long request = options.count("request") ? std::atol(options["request"].c_str()) : 0;
+        uint32 page = options.count("page") ? static_cast<uint32>(std::max(1, std::atoi(options["page"].c_str()))) : 1;
+        std::string sort = options["sort"], text = options["text"];
+
+        EUGCQuery queryType = k_EUGCQuery_RankedByTrend;
+        if (!text.empty()) queryType = k_EUGCQuery_RankedByTextSearch;
+        else if (sort == "popular") queryType = k_EUGCQuery_RankedByVote;
+        else if (sort == "recent") queryType = k_EUGCQuery_RankedByPublicationDate;
+        else if (sort == "subscribed") queryType = k_EUGCQuery_RankedByTotalUniqueSubscriptions;
+
+        UGCQueryHandle_t query = api.CreateQueryAllUGCRequestPage(ugc, queryType, k_EUGCMatchingUGCType_Items_ReadyToUse, kAppID, kAppID, page);
+        if (query == k_UGCQueryHandleInvalid) {
+            emit("{\"event\":\"browseResults\",\"request\":" + std::to_string(request) + ",\"result\":2,\"total\":0,\"items\":[]}");
+            return;
+        }
+        if (queryType == k_EUGCQuery_RankedByTrend) {
+            api.SetRankedByTrendDays(ugc, query, options.count("days") ? static_cast<uint32>(std::atoi(options["days"].c_str())) : 7);
+        }
+        if (!text.empty()) api.SetSearchText(ugc, query, text.c_str());
+        for (const char *group : {"types", "ratings"}) {
+            auto tags = split(options[group], ',');
+            if (tags.empty()) continue;
+            std::vector<const char *> pointers;
+            for (auto &tag : tags) pointers.push_back(tag.c_str());
+            SteamParamStringArray_t array{pointers.data(), static_cast<int32>(pointers.size())};
+            api.AddRequiredTagGroup(ugc, query, &array);
+        }
+        if (!options["tag"].empty()) api.AddRequiredTag(ugc, query, options["tag"].c_str());
+        api.SetReturnLongDescription(ugc, query, true);
+
+        SteamAPICall_t call = api.SendQueryUGCRequest(ugc, query);
+        if (call == k_uAPICallInvalid) {
+            api.ReleaseQueryUGCRequest(ugc, query);
+            emit("{\"event\":\"browseResults\",\"request\":" + std::to_string(request) + ",\"result\":2,\"total\":0,\"items\":[]}");
+            return;
+        }
+        pendingCalls[call] = {SteamUGCQueryCompleted_t::k_iCallback, query, request};
+    }
+
+    /// One query result as JSON, plus this account's state for the item.
+    std::string queryItemJSON(UGCQueryHandle_t query, uint32 index, bool full) {
+        SteamUGCDetails_t details;
+        if (!api.GetQueryUGCResult(ugc, query, index, &details)) return "";
+        char preview[1024] = {0};
+        api.GetQueryUGCPreviewURL(ugc, query, index, preview, sizeof preview);
+        std::ostringstream item;
+        item << "{\"id\":" << idString(details.m_nPublishedFileId)
+             << ",\"result\":" << details.m_eResult << ",\"title\":" << quoted(details.m_rgchTitle)
+             << ",\"tags\":" << quoted(details.m_rgchTags) << ",\"preview\":" << quoted(preview)
+             << ",\"fileSize\":" << static_cast<uint32>(details.m_nFileSize);
+        if (full) {
+            uint64 subscriptions = 0;
+            api.GetQueryUGCStatistic(ugc, query, index, k_EItemStatistic_NumUniqueSubscriptions, &subscriptions);
+            item << ",\"description\":" << quoted(details.m_rgchDescription)
+                 << ",\"votesUp\":" << details.m_unVotesUp << ",\"votesDown\":" << details.m_unVotesDown
+                 << ",\"score\":" << (std::isfinite(details.m_flScore) ? details.m_flScore : 0.0f) << ",\"subscriptions\":" << subscriptions
+                 << ",\"timeUpdated\":" << details.m_rtimeUpdated
+                 << ",\"state\":" << api.GetItemState(ugc, details.m_nPublishedFileId);
+        }
+        return item.str() + "}";
+    }
+
     void handleCallResult(const SteamAPICallCompleted_t &completed) {
         auto pending = pendingCalls.find(completed.m_hAsyncCall);
         if (pending == pendingCalls.end()) return;
-        auto [expected, query] = pending->second;
+        auto [expected, query, request] = pending->second;
         pendingCalls.erase(pending);
         std::vector<uint8> buffer(completed.m_cubParam);
         bool failed = true;
@@ -282,19 +403,20 @@ struct Session {
                                                       static_cast<int>(buffer.size()), expected, &failed);
         if (expected == SteamUGCQueryCompleted_t::k_iCallback) {
             auto *result = reinterpret_cast<SteamUGCQueryCompleted_t *>(buffer.data());
-            std::string json = "{\"event\":\"details\",\"items\":[";
-            if (ok && !failed && result->m_eResult == k_EResultOK) {
+            bool succeeded = ok && !failed && result->m_eResult == k_EResultOK;
+            bool browsing = request >= 0;
+            std::string json = browsing
+                ? "{\"event\":\"browseResults\",\"request\":" + std::to_string(request)
+                  + ",\"result\":" + std::to_string(succeeded ? int(k_EResultOK) : int(ok && !failed ? result->m_eResult : k_EResultFail))
+                  + ",\"total\":" + std::to_string(succeeded ? result->m_unTotalMatchingResults : 0) + ",\"items\":["
+                : "{\"event\":\"details\",\"items\":[";
+            if (succeeded) {
+                bool first = true;
                 for (uint32 i = 0; i < result->m_unNumResultsReturned; i++) {
-                    SteamUGCDetails_t details;
-                    if (!api.GetQueryUGCResult(ugc, query, i, &details)) continue;
-                    char preview[1024] = {0};
-                    api.GetQueryUGCPreviewURL(ugc, query, i, preview, sizeof preview);
-                    std::ostringstream item;
-                    item << (i ? "," : "") << "{\"id\":" << idString(details.m_nPublishedFileId)
-                         << ",\"result\":" << details.m_eResult << ",\"title\":" << quoted(details.m_rgchTitle)
-                         << ",\"tags\":" << quoted(details.m_rgchTags) << ",\"preview\":" << quoted(preview)
-                         << ",\"fileSize\":" << static_cast<uint32>(details.m_nFileSize) << "}";
-                    json += item.str();
+                    std::string item = queryItemJSON(query, i, browsing);
+                    if (item.empty()) continue;
+                    json += (first ? "" : ",") + item;
+                    first = false;
                 }
             }
             emit(json + "]}");

@@ -45,12 +45,11 @@ struct SettingsView: View {
         case advanced = "Advanced"
     }
 
-    let model: AppModel
-    @State var pane: Pane = .general
+    @Bindable var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $pane) {
+            Picker("", selection: $model.settingsPane) {
                 ForEach(Pane.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -58,7 +57,7 @@ struct SettingsView: View {
             .fixedSize()
             .padding(.top, 14)
 
-            switch pane {
+            switch model.settingsPane {
             case .general: GeneralSettings(model: model)
             case .audioMedia: AudioMediaSettings(model: model)
             case .workshop: WorkshopSettings(model: model, sync: model.workshopSync)
@@ -163,6 +162,21 @@ private struct WorkshopSettings: View {
             }
 
             Section {
+                Picker("Show in Browse", selection: Binding(
+                    get: { model.workshopRatingLevel },
+                    set: { model.workshopRatingLevel = $0 }
+                )) {
+                    Text("Everyone").tag(0)
+                    Text("Everyone and Questionable").tag(1)
+                    Text("Everything, including Mature").tag(2)
+                }
+            } header: {
+                Text("Browsing")
+            } footer: {
+                Text("Uses the content rating authors give their wallpapers on the Workshop.")
+            }
+
+            Section {
                 LabeledContent("Folder") {
                     Text(abbreviated(model.steamworksSDKFolder.path))
                         .lineLimit(1)
@@ -264,16 +278,10 @@ func workshopSummary(subscribed: Int, notDownloaded: Int) -> String {
 func workshopSyncStatus(_ sync: WorkshopSync, enabled: Bool) -> String {
     switch sync.phase {
     case .problem(let problem):
-        switch problem {
-        case .helperMissing: return "This build doesn’t include the Workshop helper. Rebuild with the Steamworks SDK in ~/sdk."
-        case .sdkMissing: return "The Steamworks SDK wasn’t found in the folder below."
-        case .steamNotRunning: return "Steam isn’t running. Open Steam and sign in, then sync again."
-        case .notOwned: return "The signed-in Steam account doesn’t own Wallpaper Engine."
-        case .failed(let message): return message
-        }
+        return workshopProblemMessage(problem)
     case .syncing:
         let active = sync.activeDownloads
-        guard !active.isEmpty else { return "Checking subscriptions…" }
+        guard !active.isEmpty else { return "Connected to Steam" }
         let done = active.reduce(UInt64(0)) { total, item in
             if case .downloading(let downloaded, _) = item.status { return total + downloaded }
             return total

@@ -25,6 +25,75 @@ public enum SteamResult {
     }
 }
 
+/// A Workshop catalogue entry, as returned by a browse query.
+public struct WorkshopItem: Identifiable, Equatable, Sendable, Decodable {
+    public let id: String
+    public let title: String
+    public let description: String
+    /// Comma-separated in Steam's answer; split here.
+    public let tags: [String]
+    public let previewURL: URL?
+    public let fileSize: UInt64
+    public let votesUp: UInt32
+    public let votesDown: UInt32
+    public let subscriptions: UInt64
+    public let timeUpdated: Date
+    /// This account's `EItemState` for the item when the query ran.
+    public let state: UInt32
+
+    /// Wallpaper Engine's type tag (Scene, Video, Web, Application, …).
+    public var type: String? { tags.first { WorkshopCatalog.types.contains($0) || $0 == "Application" || $0 == "Preset" } }
+    public var rating: String? { tags.first { WorkshopCatalog.ratings.contains($0) } }
+
+    public init(id: String, title: String, description: String = "", tags: [String] = [], previewURL: URL? = nil,
+                fileSize: UInt64 = 0, votesUp: UInt32 = 0, votesDown: UInt32 = 0, subscriptions: UInt64 = 0,
+                timeUpdated: Date = .distantPast, state: UInt32 = 0) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.tags = tags
+        self.previewURL = previewURL
+        self.fileSize = fileSize
+        self.votesUp = votesUp
+        self.votesDown = votesDown
+        self.subscriptions = subscriptions
+        self.timeUpdated = timeUpdated
+        self.state = state
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, description, tags, preview, fileSize, votesUp, votesDown, subscriptions, timeUpdated, state
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        tags = (try c.decodeIfPresent(String.self, forKey: .tags) ?? "").split(separator: ",").map(String.init)
+        previewURL = (try c.decodeIfPresent(String.self, forKey: .preview)).flatMap(URL.init(string:))
+        fileSize = try c.decodeIfPresent(UInt64.self, forKey: .fileSize) ?? 0
+        votesUp = try c.decodeIfPresent(UInt32.self, forKey: .votesUp) ?? 0
+        votesDown = try c.decodeIfPresent(UInt32.self, forKey: .votesDown) ?? 0
+        subscriptions = try c.decodeIfPresent(UInt64.self, forKey: .subscriptions) ?? 0
+        timeUpdated = Date(timeIntervalSince1970: TimeInterval(try c.decodeIfPresent(UInt64.self, forKey: .timeUpdated) ?? 0))
+        state = try c.decodeIfPresent(UInt32.self, forKey: .state) ?? 0
+    }
+}
+
+/// Wallpaper Engine's Workshop tag vocabulary.
+public enum WorkshopCatalog {
+    /// Types this app can play.
+    public static let types = ["Scene", "Video", "Web"]
+    /// Content ratings, mildest first.
+    public static let ratings = ["Everyone", "Questionable", "Mature"]
+    public static let genres = [
+        "Abstract", "Animal", "Anime", "Cartoon", "CGI", "Cyberpunk", "Fantasy", "Game", "Girls", "Guys",
+        "Landscape", "Medieval", "Memes", "MMD", "Music", "Nature", "Pixel art", "Relaxing", "Retro",
+        "Sci-Fi", "Sports", "Technology", "Television", "Vehicle", "Unspecified",
+    ]
+}
+
 /// One event line from `SteamWorkshopHelper`.
 public enum WorkshopHelperEvent: Equatable, Sendable {
     public struct Item: Equatable, Sendable, Decodable {
@@ -58,6 +127,7 @@ public enum WorkshopHelperEvent: Equatable, Sendable {
     case subscribeResult(id: String, result: Int)
     case unsubscribeResult(id: String, result: Int)
     case details([Details])
+    case browseResults(request: Int, result: Int, total: Int, items: [WorkshopItem])
 
     /// Decode one JSON line; nil for anything unrecognised.
     public static func decode(_ line: String) -> WorkshopHelperEvent? {
@@ -91,6 +161,10 @@ public enum WorkshopHelperEvent: Equatable, Sendable {
             return (try? d.decode(Identified.self, from: data)).map { .unsubscribed(id: $0.id) }
         case "details":
             return (try? d.decode(DetailsList.self, from: data)).map { .details($0.items) }
+        case "browseResults":
+            return (try? d.decode(BrowseResults.self, from: data)).map {
+                .browseResults(request: $0.request, result: $0.result, total: $0.total, items: $0.items)
+            }
         default:
             return nil
         }
@@ -106,6 +180,7 @@ public enum WorkshopHelperEvent: Equatable, Sendable {
     private struct Installed: Decodable { let item: Item }
     private struct Identified: Decodable { let id: String }
     private struct DetailsList: Decodable { let items: [Details] }
+    private struct BrowseResults: Decodable { let request: Int; let result: Int; let total: Int; let items: [WorkshopItem] }
 }
 
 /// A running helper process, seen as lines in and events out.

@@ -48,7 +48,7 @@ struct GalleryView: View {
                         .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
                 }
         }
-        .searchable(text: $library.searchText, prompt: "Search wallpapers")
+        .searchable(text: $library.searchText, prompt: library.filter == .browse ? "Search the Workshop" : "Search wallpapers")
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
         .toolbar {
@@ -78,12 +78,16 @@ struct GalleryView: View {
         case .favorites: return "Favorites"
         case .recent: return "Recent"
         case .downloads: return "Downloads"
+        case .browse: return "Steam Workshop"
         case .type(let type): return type.displayName
         case .tag(let tag): return tag.capitalized
         }
     }
 
     private var subtitle: String {
+        if library.filter == .browse {
+            return library.searchText.isEmpty ? "Browse" : "Search results"
+        }
         if library.filter == .downloads {
             let count = appModel.workshopSync.activeDownloads.count
             return count == 1 ? "1 item" : "\(count) items"
@@ -98,7 +102,9 @@ struct GalleryView: View {
     @ViewBuilder
     private var content: some View {
         let wallpapers = library.filteredWallpapers
-        if library.filter == .downloads {
+        if library.filter == .browse {
+            WorkshopBrowseView(sync: appModel.workshopSync, library: library, appModel: appModel)
+        } else if library.filter == .downloads {
             WorkshopDownloadsView(sync: appModel.workshopSync)
         } else if library.isScanning && library.wallpapers.isEmpty {
             ProgressView("Scanning wallpapers…")
@@ -237,12 +243,31 @@ struct GalleryView: View {
 
     @ViewBuilder
     private var inspector: some View {
-        if let wallpaper = selectedWallpaper {
+        if library.filter == .browse {
+            browseInspector
+        } else if let wallpaper = selectedWallpaper {
             LibraryInspector(wallpaper: wallpaper, library: library, appModel: appModel)
                 .id(wallpaper.libraryPath)
         } else {
             ContentUnavailableView("No Selection", systemImage: "sidebar.right",
                                    description: Text("Select a wallpaper to see its details and settings. Double-click to apply it."))
+        }
+    }
+
+    /// A catalogue item already in the library gets the library inspector
+    /// (Apply, properties), so one wallpaper never has two inspectors.
+    @ViewBuilder
+    private var browseInspector: some View {
+        let sync = appModel.workshopSync
+        if let id = library.selectedWorkshopID, let local = library.wallpaper(inFolderNamed: id) {
+            LibraryInspector(wallpaper: local, library: library, appModel: appModel)
+                .id(local.libraryPath)
+        } else if let id = library.selectedWorkshopID, let item = sync.browse.items.first(where: { $0.id == id }) {
+            WorkshopItemInspector(item: item, sync: sync, library: library)
+                .id(item.id)
+        } else {
+            ContentUnavailableView("No Selection", systemImage: "sidebar.right",
+                                   description: Text("Select a Workshop item to see its details. Double-click to subscribe."))
         }
     }
 
@@ -309,6 +334,9 @@ private struct LibrarySidebar: View {
                 row("All Wallpapers", icon: "square.grid.2x2", filter: .all, count: library.wallpapers.count)
                 row("Favorites", icon: "heart", filter: .favorites, count: nil)
                 row("Recent", icon: "clock", filter: .recent, count: nil)
+            }
+            Section("Steam Workshop") {
+                row("Browse", icon: "globe", filter: .browse, count: nil)
                 if !sync.downloads.isEmpty || library.filter == .downloads {
                     row("Downloads", icon: "arrow.down.circle", filter: .downloads, count: sync.activeDownloads.count)
                 }

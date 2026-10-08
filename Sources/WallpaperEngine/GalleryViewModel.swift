@@ -13,6 +13,8 @@ enum LibraryFilter: Hashable {
     case all, favorites, recent
     /// Workshop subscriptions being downloaded (not wallpapers yet).
     case downloads
+    /// The Steam Workshop catalogue.
+    case browse
     case type(WallpaperType)
     case tag(String)
 }
@@ -33,6 +35,8 @@ final class GalleryViewModel: ObservableObject {
     @Published var searchText: String = ""
     /// `libraryPath` of the wallpaper shown in the inspector.
     @Published var selectedPath: String?
+    /// Workshop ID of the catalogue item shown in the inspector while browsing.
+    @Published var selectedWorkshopID: String?
     /// Favorites are keyed by folder name, like saved properties, so copies share them.
     @Published private(set) var favorites: Set<String>
 
@@ -64,7 +68,7 @@ final class GalleryViewModel: ObservableObject {
             case .all: return true
             case .favorites: return isFavorite(wallpaper)
             case .recent: return wallpaper.libraryPath.map(recents.contains) ?? false
-            case .downloads: return false
+            case .downloads, .browse: return false
             case .type(let type): return wallpaper.type == type
             case .tag(let tag): return wallpaper.tags?.contains(tag) ?? false
             }
@@ -101,6 +105,12 @@ final class GalleryViewModel: ObservableObject {
     var selectedWallpaper: WallpaperProject? {
         guard let selectedPath else { return nil }
         return wallpapers.first { $0.libraryPath == selectedPath }
+    }
+
+    /// The library wallpaper whose folder is named `name` (a Workshop ID for
+    /// Workshop items), if any.
+    func wallpaper(inFolderNamed name: String) -> WallpaperProject? {
+        wallpapers.first { $0.directoryURL?.lastPathComponent == name }
     }
 
     enum Move { case left, right, up, down }
