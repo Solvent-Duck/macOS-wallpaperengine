@@ -53,6 +53,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.model = model
         statusBar = StatusBarController(model: model)
         model.loadInitialWallpaper(path: initialWallpaperPath)
+        model.startWorkshopMonitoring()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

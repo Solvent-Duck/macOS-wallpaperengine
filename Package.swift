@@ -16,6 +16,10 @@ let package = Package(
             dependencies: ["WallpaperEngine"]
         ),
         .testTarget(
+            name: "SteamLibraryTests",
+            dependencies: ["SteamLibrary"]
+        ),
+        .testTarget(
             name: "NativeSceneRendererTests",
             dependencies: ["NativeSceneCore", "NativeSceneRuntime", "NativeSceneRenderer"]
         ),
@@ -26,6 +30,10 @@ let package = Package(
         .target(
             name: "NativeSceneCore",
             path: "Sources/NativeSceneCore"
+        ),
+        .target(
+            name: "SteamLibrary",
+            path: "Sources/SteamLibrary"
         ),
         .target(
             name: "CShaderCompiler",
@@ -132,7 +140,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "WallpaperEngine",
-            dependencies: ["NativeSceneCore", "NativeSceneBridge", "NativeSceneCompatibility", "NativeSceneRuntime", "NativeSceneRenderer"],
+            dependencies: ["NativeSceneCore", "NativeSceneBridge", "NativeSceneCompatibility", "NativeSceneRuntime", "NativeSceneRenderer", "SteamLibrary"],
             path: "Sources/WallpaperEngine",
             exclude: ["WallpaperEngineInfo.plist"],
             linkerSettings: [

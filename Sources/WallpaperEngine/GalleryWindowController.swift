@@ -1,4 +1,5 @@
 import AppKit
+import SteamLibrary
 import SwiftUI
 
 /// Manages the library window lifecycle, bridging SwiftUI into
@@ -58,13 +59,12 @@ enum LibraryFolders {
     private static let defaultsKey = "wallpaperDirectory"
 
     /// The folders scanned when the user hasn't chosen one: the user guide's
-    /// copy-in folder first (so copies win over duplicates), then Steam's workshop.
+    /// copy-in folder first (so copies win over duplicates), then Wallpaper
+    /// Engine's Workshop folder in every Steam library.
     static var defaultDirectories: [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return [
-            home.appendingPathComponent("Wallpaper Projects", isDirectory: true),
-            home.appendingPathComponent("Library/Application Support/Steam/steamapps/workshop/content/431960", isDirectory: true),
-        ]
+        return [home.appendingPathComponent("Wallpaper Projects", isDirectory: true)]
+            + SteamLibraryLocator().workshopLibraries().map(\.contentDirectory)
     }
 
     /// The user's chosen folder, if they picked one instead of the defaults.

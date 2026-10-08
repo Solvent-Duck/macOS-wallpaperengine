@@ -70,8 +70,39 @@ Findings that change the design:
   Everyone, with a setting to change it.
 - **`libsteam_api.dylib`'s install name is `@loader_path`.** Either copy it next to the
   helper binary (from the user's SDK path) or `dlopen` it by absolute path.
+- **Starting a session makes Steam download every pending subscription.** About 10 minutes
+  after the probe sessions, Steam had installed the pending items (245 new folders) on its
+  own (content folder 20.6 GB → 46 GB), with no further `DownloadItem` calls. Active sync may
+  only need a running session plus `DownloadItem` for stragglers. The first sync must warn
+  about size, because subscriptions can add up to tens of GB.
+- **Some subscriptions can never download.** `DownloadItem(920933904)` returned
+  `k_EResultAccessDenied` (15): the item is removed or private. Record failures and don't
+  retry them in a loop; show them as "Unavailable".
+- **`GetItemState` can claim an item is installed when its folder is gone.** Three items
+  reported `Installed` with a `GetItemInstallInfo` folder that doesn't exist on disk. Sync
+  must check that the folder exists and call `DownloadItem` to repair it.
 
-## Phase 1 — Passive sync without the SDK (ships regardless)
+## Phase 1 — Passive sync without the SDK (done)
+
+Status (2026-10-08): committed on `workshop/steam-sync`.
+- `SteamLibrary` target: `VDF`, `SteamLibraryLocator`, `WorkshopManifest`,
+  `WorkshopSubscriptions`, `WorkshopSnapshot`, `WorkshopFolderWatcher`.
+- `GalleryViewModel.refreshFolder(named:)`.
+- `AppModel.startWorkshopMonitoring()`, started by `AppDelegate`.
+- A subscription count in Settings.
+
+Changes from the plan:
+- **No notification when the active wallpaper is removed.** The app is an unbundled SwiftPM
+  executable, so `UNUserNotificationCenter` isn't available; the desktop just clears.
+- **"Not downloaded" placeholder tiles are deferred to Phase 2**, where they can show download
+  state. Phase 1 shows the count in Settings instead.
+- **The incremental update API is a single `refreshFolder(named:)`, not separate
+  `upsert`/`remove`.** It re-resolves the name across library folders, so removing a copy
+  reveals the Workshop item underneath it.
+
+Live check against real Steam: the watcher reported 711 subscribed, 708 installed and 4 not
+downloaded. These counts match the files on disk; the SDK's figure of 1 not downloaded is
+stale (see the Phase 0 findings).
 
 New target `SteamLibrary` (pure Swift, no Steam dependency):
 

@@ -41,6 +41,7 @@ final class GalleryViewModel: ObservableObject {
     private var tagCounts: [String: Int] = [:]
     private var typeCounts: [WallpaperType: Int] = [:]
     private var scanGeneration = 0
+    private var changedDuringScan = Set<String>()
 
     /// Recently applied wallpaper paths, newest first.
     var recentPaths: () -> [String] = { [] }
@@ -151,18 +152,55 @@ final class GalleryViewModel: ObservableObject {
             }.value
             guard generation == scanGeneration else { return }
 
-            var tagCounts: [String: Int] = [:]
-            var typeCounts: [WallpaperType: Int] = [:]
-            for project in projects {
-                typeCounts[project.type, default: 0] += 1
-                for tag in Set(project.tags ?? []) { tagCounts[tag, default: 0] += 1 }
-            }
-            self.tagCounts = tagCounts
-            self.typeCounts = typeCounts
             wallpapers = projects
-            allTags = tagCounts.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            recount()
             isScanning = false
+            // Folders that changed on disk while the scan ran may have been
+            // read before the change.
+            let changed = changedDuringScan
+            changedDuringScan.removeAll()
+            for name in changed { refreshFolder(named: name) }
         }
+    }
+
+    /// Re-resolve one wallpaper folder name after it was added, changed or
+    /// removed on disk: the earliest scanned directory holding a loadable
+    /// project by that name wins, as in a full scan.
+    func refreshFolder(named name: String) {
+        guard hasScanned else { return }
+        if isScanning {
+            changedDuringScan.insert(name)
+            return
+        }
+        let winner = scannedDirectories.lazy.compactMap { directory in
+            Self.loadProject(at: directory.appendingPathComponent(name, isDirectory: true), tags: Self.sidecarTags(in: directory))
+        }.first
+        let index = wallpapers.firstIndex { $0.directoryURL?.lastPathComponent == name }
+        switch (index, winner) {
+        case let (index?, winner?):
+            if selectedPath == wallpapers[index].libraryPath { selectedPath = winner.libraryPath }
+            wallpapers[index] = winner
+        case let (nil, winner?):
+            wallpapers.append(winner)
+        case let (index?, nil):
+            if selectedPath == wallpapers[index].libraryPath { selectedPath = nil }
+            wallpapers.remove(at: index)
+        case (nil, nil):
+            return
+        }
+        recount()
+    }
+
+    private func recount() {
+        var tagCounts: [String: Int] = [:]
+        var typeCounts: [WallpaperType: Int] = [:]
+        for project in wallpapers {
+            typeCounts[project.type, default: 0] += 1
+            for tag in Set(project.tags ?? []) { tagCounts[tag, default: 0] += 1 }
+        }
+        self.tagCounts = tagCounts
+        self.typeCounts = typeCounts
+        allTags = tagCounts.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     nonisolated static func scanProjects(in directory: URL, skipping seenNames: inout Set<String>) -> [WallpaperProject] {
@@ -172,29 +210,31 @@ final class GalleryViewModel: ObservableObject {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
+        let tags = sidecarTags(in: directory)
         var projects: [WallpaperProject] = []
         for itemURL in contents {
-            let isDir = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            guard isDir, !seenNames.contains(itemURL.lastPathComponent) else { continue }
-
-            if let project = try? WallpaperLoader.load(from: itemURL, metadataOnly: true) {
-                seenNames.insert(itemURL.lastPathComponent)
-                projects.append(project)
-            }
-        }
-
-        // Load tags.json sidecar if present; it is the sole tag source for this build.
-        // Falls back to project.json tags only when tags.json does not exist.
-        let sidecarURL = directory.appendingPathComponent("tags.json")
-        if let data = try? Data(contentsOf: sidecarURL),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
-            for i in projects.indices {
-                let workshopId = projects[i].directoryURL?.lastPathComponent ?? ""
-                if let merged = json[workshopId]?["merged_tags"] as? [String] {
-                    projects[i].tags = merged
-                }
-            }
+            guard !seenNames.contains(itemURL.lastPathComponent),
+                  let project = loadProject(at: itemURL, tags: tags) else { continue }
+            seenNames.insert(itemURL.lastPathComponent)
+            projects.append(project)
         }
         return projects
+    }
+
+    /// Load one wallpaper folder's metadata, or nil if it isn't a wallpaper.
+    nonisolated static func loadProject(at folder: URL, tags: [String: [String]]?) -> WallpaperProject? {
+        let isDir = (try? folder.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        guard isDir, var project = try? WallpaperLoader.load(from: folder, metadataOnly: true) else { return nil }
+        if let merged = tags?[folder.lastPathComponent] { project.tags = merged }
+        return project
+    }
+
+    /// Tags from a directory's `tags.json` sidecar, keyed by folder name. When
+    /// present it is the sole tag source for this build; project.json tags are
+    /// the fallback only when it does not exist.
+    nonisolated static func sidecarTags(in directory: URL) -> [String: [String]]? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("tags.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return nil }
+        return json.compactMapValues { $0["merged_tags"] as? [String] }
     }
 }

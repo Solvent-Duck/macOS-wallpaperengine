@@ -89,7 +89,7 @@ private struct GeneralSettings: View {
             } footer: {
                 Text("With more than one display connected, the same wallpaper is shown on every display. Choosing a wallpaper per display isn’t available.")
             }
-            Section("Wallpaper Library") {
+            Section {
                 LabeledContent(model.usesCustomLibraryFolder ? "Folder" : "Folders") {
                     VStack(alignment: .trailing, spacing: 2) {
                         if model.libraryFolders.isEmpty {
@@ -109,6 +109,17 @@ private struct GeneralSettings: View {
                         Button("Use Default Folders") { model.useDefaultLibraryFolders() }
                     }
                     Button("Choose Folder…") { model.chooseLibraryFolder() }
+                }
+                if let subscribed = model.workshopStatus?.subscribed {
+                    LabeledContent("Steam Workshop") {
+                        Text(workshopSummary(subscribed: subscribed, notDownloaded: model.workshopStatus?.notDownloaded ?? 0))
+                    }
+                }
+            } header: {
+                Text("Wallpaper Library")
+            } footer: {
+                if let notDownloaded = model.workshopStatus?.notDownloaded, notDownloaded > 0 {
+                    Text("Subscribed items Steam hasn’t downloaded yet don’t appear in the library.")
                 }
             }
         }
@@ -181,4 +192,9 @@ private struct AdvancedSettings: View {
 
 private func abbreviated(_ path: String) -> String {
     (path as NSString).abbreviatingWithTildeInPath
+}
+
+func workshopSummary(subscribed: Int, notDownloaded: Int) -> String {
+    let items = subscribed == 1 ? "1 subscription" : "\(subscribed) subscriptions"
+    return notDownloaded == 0 ? items : "\(items), \(notDownloaded) not downloaded"
 }

@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import SteamLibrary
 
 /// Single source of truth for the app's UI surfaces (menu bar popover, settings,
 /// gallery, properties panel). Playback state lives in `DesktopWindowManager`;
@@ -32,6 +33,8 @@ final class AppModel {
     private(set) var libraryFolders: [URL] = []
     private(set) var usesCustomLibraryFolder = false
     private(set) var loginItemEnabled = false
+    /// Steam Workshop subscription counts; nil until the first Workshop scan.
+    private(set) var workshopStatus: WorkshopStatus?
 
     var restoresOnLaunch: Bool {
         get { access(keyPath: \.restoresOnLaunch); return recentStore.restoresOnLaunch }
@@ -49,6 +52,7 @@ final class AppModel {
     @ObservationIgnored private var settingsController: SettingsWindowController?
     @ObservationIgnored private var refreshTimer: Timer?
     @ObservationIgnored private var refreshClients = 0
+    @ObservationIgnored private var workshopWatcher: WorkshopFolderWatcher?
 
     init(windowManager: DesktopWindowManager) {
         self.windowManager = windowManager
@@ -211,6 +215,37 @@ final class AppModel {
         Task {
             await windowManager.mediaIntegration.connect(player)
             refresh()
+        }
+    }
+
+    // MARK: - Steam Workshop
+
+    /// Follow Steam's Workshop folders for the app's lifetime, so items
+    /// Steam installs, updates or removes reach the library and the desktop
+    /// without a rescan, whether or not a window is open.
+    func startWorkshopMonitoring() {
+        guard workshopWatcher == nil else { return }
+        let watcher = WorkshopFolderWatcher()
+        watcher.start { [weak self] changes, status in
+            self?.applyWorkshopChanges(changes, status: status)
+        }
+        workshopWatcher = watcher
+    }
+
+    func applyWorkshopChanges(_ changes: [WorkshopChange], status: WorkshopStatus) {
+        if status != workshopStatus { workshopStatus = status }
+        for change in changes { library.refreshFolder(named: change.id) }
+
+        guard let active = windowManager.currentProject?.libraryPath,
+              let change = changes.first(where: { $0.folder.standardizedFileURL.path == active }) else { return }
+        switch change.kind {
+        case .updated:
+            // Saved properties and playback are keyed by folder name, so they survive the reload.
+            Task { await load(change.folder, reportsErrors: false) }
+        case .removed:
+            clearWallpaper()
+        case .added:
+            break
         }
     }
 
