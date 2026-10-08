@@ -176,7 +176,14 @@ struct GalleryView: View {
                 gridFocused = true
             },
             onApply: { apply(wallpaper) },
-            onToggleFavorite: { library.toggleFavorite(wallpaper) }
+            onToggleFavorite: { library.toggleFavorite(wallpaper) },
+            onUnsubscribe: wallpaper.steamWorkshopID.map { id in
+                {
+                    if confirmUnsubscribe(title: wallpaper.title, isActive: path != nil && path == appModel.snapshot.directoryPath) {
+                        appModel.workshopSync.unsubscribe(id)
+                    }
+                }
+            }
         )
     }
 
@@ -377,6 +384,8 @@ struct WallpaperCard: View {
     let onSelect: () -> Void
     let onApply: () -> Void
     let onToggleFavorite: () -> Void
+    /// Set for Steam's own copies of Workshop items.
+    var onUnsubscribe: (() -> Void)?
 
     @State private var isHovered = false
 
@@ -429,6 +438,13 @@ struct WallpaperCard: View {
             if let url = wallpaper.directoryURL {
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            if let id = wallpaper.steamWorkshopID {
+                Button("Open Workshop Page") { WorkshopLinks.openPage(for: id) }
+                if let onUnsubscribe {
+                    Divider()
+                    Button("Unsubscribe on Steam…", action: onUnsubscribe)
+                }
             }
         }
         .accessibilityElement(children: .ignore)

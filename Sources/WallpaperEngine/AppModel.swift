@@ -356,6 +356,11 @@ final class AppModel {
         galleryController.show(library: library, appModel: self)
     }
 
+    func openWorkshopDownloads() {
+        library.filter = .downloads
+        openLibrary()
+    }
+
     /// Show the current wallpaper's details and properties.
     func customizeCurrentWallpaper() {
         openLibrary(selecting: snapshot.directoryPath)

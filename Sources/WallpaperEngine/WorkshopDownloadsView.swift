@@ -52,7 +52,7 @@ private struct DownloadCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
         .contextMenu {
-            Link("Open Workshop Page", destination: URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=\(item.id)")!)
+            Button("Open Workshop Page") { WorkshopLinks.openPage(for: item.id) }
         }
         .accessibilityElement(children: .combine)
     }

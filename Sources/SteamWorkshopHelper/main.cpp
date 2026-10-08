@@ -10,6 +10,7 @@
 //   download <id> | subscribe <id> | unsubscribe <id> | details <id> [<id>...]
 //   browse request=<n> sort=<trend|popular|recent|subscribed> page=<n> days=<n>
 //          types=<A,B> ratings=<A,B> tag=<T> text=<percent-encoded>
+//   vote <id> up|down | getvote <id> | favorite <id> | unfavorite <id> | favorites
 //   refresh | quit
 // Events go to stdout as one JSON object per line, each with an "event" key.
 // End of stdin (the app went away) also quits.
@@ -75,6 +76,12 @@ struct SteamAPI {
     decltype(&SteamAPI_ISteamUGC_SetRankedByTrendDays) SetRankedByTrendDays;
     decltype(&SteamAPI_ISteamUGC_SetReturnLongDescription) SetReturnLongDescription;
     decltype(&SteamAPI_ISteamUGC_GetQueryUGCStatistic) GetQueryUGCStatistic;
+    decltype(&SteamAPI_ISteamUGC_SetUserItemVote) SetUserItemVote;
+    decltype(&SteamAPI_ISteamUGC_GetUserItemVote) GetUserItemVote;
+    decltype(&SteamAPI_ISteamUGC_AddItemToFavorites) AddItemToFavorites;
+    decltype(&SteamAPI_ISteamUGC_RemoveItemFromFavorites) RemoveItemFromFavorites;
+    decltype(&SteamAPI_ISteamUGC_CreateQueryUserUGCRequest) CreateQueryUserUGCRequest;
+    decltype(&SteamAPI_ISteamUGC_SetReturnOnlyIDs) SetReturnOnlyIDs;
 };
 
 std::string loadError;
@@ -128,6 +135,12 @@ bool load(const char *path, SteamAPI &api) {
     RESOLVE(SetRankedByTrendDays, SteamAPI_ISteamUGC_SetRankedByTrendDays);
     RESOLVE(SetReturnLongDescription, SteamAPI_ISteamUGC_SetReturnLongDescription);
     RESOLVE(GetQueryUGCStatistic, SteamAPI_ISteamUGC_GetQueryUGCStatistic);
+    RESOLVE(SetUserItemVote, SteamAPI_ISteamUGC_SetUserItemVote);
+    RESOLVE(GetUserItemVote, SteamAPI_ISteamUGC_GetUserItemVote);
+    RESOLVE(AddItemToFavorites, SteamAPI_ISteamUGC_AddItemToFavorites);
+    RESOLVE(RemoveItemFromFavorites, SteamAPI_ISteamUGC_RemoveItemFromFavorites);
+    RESOLVE(CreateQueryUserUGCRequest, SteamAPI_ISteamUGC_CreateQueryUserUGCRequest);
+    RESOLVE(SetReturnOnlyIDs, SteamAPI_ISteamUGC_SetReturnOnlyIDs);
 #undef RESOLVE
     return ok;
 }
@@ -227,7 +240,10 @@ struct Session {
         int expected;
         UGCQueryHandle_t query;
         long request; // browse request number, echoed back
+        bool favorites = false; // a page of the account's favorites list
+        uint32 page = 0;
     };
+    std::vector<std::string> favoriteIDs; // accumulated across favorites pages
     std::map<SteamAPICall_t, PendingCall> pendingCalls;
 
     std::string itemJSON(PublishedFileId_t id) {
@@ -314,9 +330,47 @@ struct Session {
             else api.ReleaseQueryUGCRequest(ugc, query);
         } else if (verb == "browse") {
             browse(line);
+        } else if (verb == "vote" && ids.size() == 1) {
+            bool up = line.find(" up") != std::string::npos;
+            track(api.SetUserItemVote(ugc, ids[0], up), SetUserItemVoteResult_t::k_iCallback, ids[0]);
+        } else if (verb == "getvote") {
+            for (auto id : ids) track(api.GetUserItemVote(ugc, id), GetUserItemVoteResult_t::k_iCallback, id);
+        } else if (verb == "favorite" || verb == "unfavorite") {
+            for (auto id : ids) {
+                SteamAPICall_t call = verb == "favorite" ? api.AddItemToFavorites(ugc, kAppID, id)
+                                                        : api.RemoveItemFromFavorites(ugc, kAppID, id);
+                track(call, UserFavoriteItemsListChanged_t::k_iCallback, id);
+            }
+        } else if (verb == "favorites") {
+            favoriteIDs.clear();
+            requestFavorites(1);
         } else if (!verb.empty()) {
             emit("{\"event\":\"error\",\"code\":\"badCommand\",\"message\":" + quoted(line) + "}");
         }
+    }
+
+    /// Remember an async call; `id` is reported back even if the call fails
+    /// and its result struct is empty.
+    void track(SteamAPICall_t call, int expected, PublishedFileId_t id) {
+        if (call != k_uAPICallInvalid) pendingCalls[call] = {expected, k_UGCQueryHandleInvalid, static_cast<long>(id)};
+    }
+
+    /// The account's Workshop favorites for this app, one page at a time.
+    void requestFavorites(uint32 page) {
+        AccountID_t account = static_cast<AccountID_t>(api.GetSteamID(api.SteamUser()) & 0xFFFFFFFFull);
+        UGCQueryHandle_t query = api.CreateQueryUserUGCRequest(ugc, account, k_EUserUGCList_Favorited, k_EUGCMatchingUGCType_Items,
+                                                               k_EUserUGCListSortOrder_CreationOrderDesc, kAppID, kAppID, page);
+        api.SetReturnOnlyIDs(ugc, query, true);
+        SteamAPICall_t call = api.SendQueryUGCRequest(ugc, query);
+        if (call == k_uAPICallInvalid) {
+            api.ReleaseQueryUGCRequest(ugc, query);
+            emit("{\"event\":\"favorites\",\"result\":2,\"ids\":[]}");
+            return;
+        }
+        PendingCall pending{SteamUGCQueryCompleted_t::k_iCallback, query, -1};
+        pending.favorites = true;
+        pending.page = page;
+        pendingCalls[call] = pending;
     }
 
     /// One page of the Workshop catalogue. Tag groups require at least one
@@ -395,12 +449,55 @@ struct Session {
     void handleCallResult(const SteamAPICallCompleted_t &completed) {
         auto pending = pendingCalls.find(completed.m_hAsyncCall);
         if (pending == pendingCalls.end()) return;
-        auto [expected, query, request] = pending->second;
+        PendingCall info = pending->second;
+        int expected = info.expected;
+        UGCQueryHandle_t query = info.query;
+        long request = info.request;
         pendingCalls.erase(pending);
         std::vector<uint8> buffer(completed.m_cubParam);
         bool failed = true;
         bool ok = api.ManualDispatch_GetAPICallResult(pipe, completed.m_hAsyncCall, buffer.data(),
                                                       static_cast<int>(buffer.size()), expected, &failed);
+        if (info.favorites) {
+            auto *result = reinterpret_cast<SteamUGCQueryCompleted_t *>(buffer.data());
+            bool succeeded = ok && !failed && result->m_eResult == k_EResultOK;
+            if (succeeded) {
+                for (uint32 i = 0; i < result->m_unNumResultsReturned; i++) {
+                    SteamUGCDetails_t details;
+                    if (api.GetQueryUGCResult(ugc, query, i, &details)) favoriteIDs.push_back(idString(details.m_nPublishedFileId));
+                }
+            }
+            api.ReleaseQueryUGCRequest(ugc, query);
+            if (succeeded && result->m_unNumResultsReturned >= kNumUGCResultsPerPage && info.page < 100) {
+                requestFavorites(info.page + 1);
+                return;
+            }
+            std::string json = "{\"event\":\"favorites\",\"result\":" + std::to_string(succeeded ? int(k_EResultOK) : int(k_EResultFail)) + ",\"ids\":[";
+            for (size_t i = 0; i < favoriteIDs.size(); i++) json += (i ? "," : "") + favoriteIDs[i];
+            emit(json + "]}");
+            return;
+        }
+        if (expected == SetUserItemVoteResult_t::k_iCallback) {
+            auto *result = reinterpret_cast<SetUserItemVoteResult_t *>(buffer.data());
+            int code = (ok && !failed) ? result->m_eResult : k_EResultFail;
+            emit("{\"event\":\"voteResult\",\"id\":" + idString(static_cast<PublishedFileId_t>(request)) + ",\"result\":" + std::to_string(code)
+                 + ",\"up\":" + (result->m_bVoteUp ? "true" : "false") + "}");
+            return;
+        }
+        if (expected == GetUserItemVoteResult_t::k_iCallback) {
+            auto *result = reinterpret_cast<GetUserItemVoteResult_t *>(buffer.data());
+            int code = (ok && !failed) ? result->m_eResult : k_EResultFail;
+            emit("{\"event\":\"userVote\",\"id\":" + idString(static_cast<PublishedFileId_t>(request)) + ",\"result\":" + std::to_string(code)
+                 + ",\"up\":" + (result->m_bVotedUp ? "true" : "false") + ",\"down\":" + (result->m_bVotedDown ? "true" : "false") + "}");
+            return;
+        }
+        if (expected == UserFavoriteItemsListChanged_t::k_iCallback) {
+            auto *result = reinterpret_cast<UserFavoriteItemsListChanged_t *>(buffer.data());
+            int code = (ok && !failed) ? result->m_eResult : k_EResultFail;
+            emit("{\"event\":\"favoriteResult\",\"id\":" + idString(static_cast<PublishedFileId_t>(request)) + ",\"result\":" + std::to_string(code)
+                 + ",\"added\":" + (result->m_bWasAddRequest ? "true" : "false") + "}");
+            return;
+        }
         if (expected == SteamUGCQueryCompleted_t::k_iCallback) {
             auto *result = reinterpret_cast<SteamUGCQueryCompleted_t *>(buffer.data());
             bool succeeded = ok && !failed && result->m_eResult == k_EResultOK;

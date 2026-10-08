@@ -128,6 +128,10 @@ public enum WorkshopHelperEvent: Equatable, Sendable {
     case unsubscribeResult(id: String, result: Int)
     case details([Details])
     case browseResults(request: Int, result: Int, total: Int, items: [WorkshopItem])
+    case voteResult(id: String, result: Int, up: Bool)
+    case userVote(id: String, result: Int, up: Bool, down: Bool)
+    case favoriteResult(id: String, result: Int, added: Bool)
+    case favorites(result: Int, ids: [String])
 
     /// Decode one JSON line; nil for anything unrecognised.
     public static func decode(_ line: String) -> WorkshopHelperEvent? {
@@ -165,6 +169,14 @@ public enum WorkshopHelperEvent: Equatable, Sendable {
             return (try? d.decode(BrowseResults.self, from: data)).map {
                 .browseResults(request: $0.request, result: $0.result, total: $0.total, items: $0.items)
             }
+        case "voteResult":
+            return (try? d.decode(VoteResult.self, from: data)).map { .voteResult(id: $0.id, result: $0.result, up: $0.up) }
+        case "userVote":
+            return (try? d.decode(UserVote.self, from: data)).map { .userVote(id: $0.id, result: $0.result, up: $0.up, down: $0.down) }
+        case "favoriteResult":
+            return (try? d.decode(FavoriteResult.self, from: data)).map { .favoriteResult(id: $0.id, result: $0.result, added: $0.added) }
+        case "favorites":
+            return (try? d.decode(Favorites.self, from: data)).map { .favorites(result: $0.result, ids: $0.ids) }
         default:
             return nil
         }
@@ -180,6 +192,10 @@ public enum WorkshopHelperEvent: Equatable, Sendable {
     private struct Installed: Decodable { let item: Item }
     private struct Identified: Decodable { let id: String }
     private struct DetailsList: Decodable { let items: [Details] }
+    private struct VoteResult: Decodable { let id: String; let result: Int; let up: Bool }
+    private struct UserVote: Decodable { let id: String; let result: Int; let up: Bool; let down: Bool }
+    private struct FavoriteResult: Decodable { let id: String; let result: Int; let added: Bool }
+    private struct Favorites: Decodable { let result: Int; let ids: [String] }
     private struct BrowseResults: Decodable { let request: Int; let result: Int; let total: Int; let items: [WorkshopItem] }
 }
 

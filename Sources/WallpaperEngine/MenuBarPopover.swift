@@ -65,6 +65,7 @@ struct MenuBarPopover: View {
                 if snapshot.supportsAudio { volume }
             }
             if !model.recents.isEmpty { recents }
+            if !model.workshopSync.activeDownloads.isEmpty { workshopDownloads }
             library
             Divider()
             footer
@@ -198,6 +199,38 @@ struct MenuBarPopover: View {
     }
 
     // MARK: Library
+
+    /// Shown while Steam is fetching Workshop subscriptions.
+    private var workshopDownloads: some View {
+        let downloads = model.workshopSync.activeDownloads
+        var done: UInt64 = 0, total: UInt64 = 0
+        for item in downloads {
+            if case .downloading(let bytes, let size) = item.status {
+                done += bytes
+                total += size
+            } else {
+                total += item.size ?? 0
+            }
+        }
+        return Button {
+            dismiss()
+            model.openWorkshopDownloads()
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Label(downloads.count == 1 ? "Downloading 1 Workshop item" : "Downloading \(downloads.count) Workshop items",
+                      systemImage: "arrow.down.circle")
+                    .font(.callout)
+                if total > 0 {
+                    ProgressView(value: Double(done), total: Double(total))
+                        .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show downloads in the library")
+    }
 
     private var library: some View {
         HStack(spacing: 8) {

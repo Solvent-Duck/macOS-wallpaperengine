@@ -75,7 +75,8 @@ struct LibraryInspector: View {
                     Label(wallpaper.type.rawValue.capitalized, systemImage: wallpaper.type.symbolName)
                     if let id = workshopID {
                         Text("·")
-                        Link("Workshop \(id)", destination: URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)")!)
+                        Button("Workshop \(id)") { WorkshopLinks.openPage(for: id) }
+                            .buttonStyle(.link)
                     }
                 }
                 .font(.caption)
@@ -141,7 +142,10 @@ struct LibraryInspector: View {
                     }
                 }
             }
-            if let error = appModel.workshopSync.lastSubscriptionError, steamWorkshopID != nil {
+            if let id = workshopID {
+                WorkshopFeedbackControls(id: id, sync: appModel.workshopSync)
+            }
+            if let error = appModel.workshopSync.lastActionError, workshopID != nil {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
 
@@ -162,14 +166,7 @@ struct LibraryInspector: View {
         .padding(.vertical, 4)
     }
 
-    /// The Workshop ID when this wallpaper is Steam's own copy (inside a
-    /// Workshop content folder), which unsubscribing would remove.
-    private var steamWorkshopID: String? {
-        guard let id = workshopID,
-              wallpaper.directoryURL?.deletingLastPathComponent().path.hasSuffix("/workshop/content/\(wallpaperEngineAppID)") == true
-        else { return nil }
-        return id
-    }
+    private var steamWorkshopID: String? { wallpaper.steamWorkshopID }
 
     private var workshopID: String? {
         guard let name = wallpaper.directoryURL?.lastPathComponent,

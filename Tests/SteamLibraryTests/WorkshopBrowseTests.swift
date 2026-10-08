@@ -99,12 +99,12 @@ struct WorkshopBrowseTests {
         let (sync, helper) = makeSync()
         sync.subscribe("1")
         helper.emit(#"{"event":"subscribeResult","id":"1","result":15}"#)
-        #expect(sync.lastSubscriptionError != nil)
+        #expect(sync.lastActionError != nil)
         #expect(!sync.subscribedIDs.contains("1"))
 
         helper.emit(#"{"event":"subscriptions","settled":true,"items":[{"id":"2","state":5,"folder":"/w/2","size":1,"timeUpdated":1}]}"#)
         sync.unsubscribe("2")
-        #expect(sync.lastSubscriptionError == nil)
+        #expect(sync.lastActionError == nil)
         helper.emit(#"{"event":"unsubscribeResult","id":"2","result":1}"#)
         #expect(sync.subscribedIDs.isEmpty)
     }

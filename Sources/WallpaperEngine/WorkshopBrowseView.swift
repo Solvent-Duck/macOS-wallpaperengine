@@ -142,6 +142,7 @@ struct WorkshopBrowseView: View {
                             },
                             onPrimaryAction: { primaryAction(for: item) }
                         )
+                        .contextMenu { contextMenu(for: item) }
                         .id(item.id)
                         .onAppear {
                             if item.id == sync.browse.items.last?.id { sync.loadMore() }
@@ -176,6 +177,24 @@ struct WorkshopBrowseView: View {
         case .changing, .subscribed, .downloading:
             break
         }
+    }
+
+    @ViewBuilder
+    private func contextMenu(for item: WorkshopItem) -> some View {
+        switch localState(of: item.id, sync: sync, library: library) {
+        case .notSubscribed:
+            Button("Subscribe") { sync.subscribe(item.id) }
+        case .subscribed, .downloading, .inLibrary:
+            Button("Unsubscribe…") {
+                let local = library.wallpaper(inFolderNamed: item.id)
+                let isActive = local?.libraryPath != nil && local?.libraryPath == appModel.snapshot.directoryPath
+                if confirmUnsubscribe(title: item.title, isActive: isActive) { sync.unsubscribe(item.id) }
+            }
+        case .changing:
+            EmptyView()
+        }
+        Divider()
+        Button("Open Workshop Page") { WorkshopLinks.openPage(for: item.id) }
     }
 
     private var columnCount: Int {
@@ -305,16 +324,13 @@ struct WorkshopItemInspector: View {
                         Text(item.title)
                             .font(.title3.weight(.semibold))
                             .textSelection(.enabled)
-                        HStack(spacing: 6) {
-                            Text([item.type, item.rating].compactMap { $0 }.joined(separator: " · "))
-                            Text("·")
-                            Link("Workshop \(item.id)", destination: URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=\(item.id)")!)
-                        }
+                        Text([item.type, item.rating].compactMap { $0 }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     }
                     subscribeButton
-                    if let error = sync.lastSubscriptionError {
+                    WorkshopFeedbackControls(id: item.id, sync: sync)
+                    if let error = sync.lastActionError {
                         Text(error).font(.caption).foregroundStyle(.red)
                     }
                 }

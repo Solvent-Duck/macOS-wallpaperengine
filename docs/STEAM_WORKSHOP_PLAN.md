@@ -282,7 +282,30 @@ How it differs from the plan:
 - Keyboard navigation and accessibility labels match the phase 5 GUI work (arrow-key grid,
   Return to subscribe/apply).
 
-## Phase 4 — Polish (optional)
+## Phase 4 — Polish (done)
+
+Status (2026-10-08): committed on `workshop/steam-sync`.
+- **Helper:** `vote`, `getvote`, `favorite`/`unfavorite` and `favorites` (pages through the
+  account's favorited list, IDs only). Results carry the requested ID even when a call fails.
+- **`WorkshopSync`:**
+  - `votes`, `favoriteIDs` and `pendingFeedback`
+  - `loadFeedback(for:)` only queries while a session is already open, so selecting a library
+    wallpaper never starts one
+  - `vote`/`setFavorite` start one when needed
+  - favorites are forgotten between sessions
+- **UI:**
+  - `WorkshopFeedbackControls` (vote up/down, Workshop favorite star, Workshop Page) in both
+    inspectors
+  - "Unsubscribe on Steam…" and "Open Workshop Page" in the library card context menu;
+    Subscribe/Unsubscribe in the Browse card context menu
+  - Workshop links open `steam://url/CommunityFilePage/<id>` when Steam is running, otherwise
+    the web page
+  - a "Downloading N Workshop items" row with progress in the menu bar popover, which opens
+    Library → Downloads
+
+Checked live (read-only): `favorites` returned the account's 1 favorite and `getvote` read a
+vote. Casting votes and changing favorites were not run against the account (unit-tested only).
+
 
 - Vote up/down and Workshop favorites (`SetUserItemVote`, `AddItemToFavorites`) in the
   inspector.
