@@ -36,6 +36,21 @@ final class AppModel {
     /// Steam Workshop subscription counts; nil until the first Workshop scan.
     private(set) var workshopStatus: WorkshopStatus?
 
+    /// Download subscriptions through a Steam session (Settings → Steam Workshop).
+    var workshopSyncEnabled: Bool {
+        get { access(keyPath: \.workshopSyncEnabled); return WorkshopSyncSettings.isEnabled }
+        set {
+            withMutation(keyPath: \.workshopSyncEnabled) { WorkshopSyncSettings.isEnabled = newValue }
+            if newValue { workshopSync.sync() } else { workshopSync.stop() }
+        }
+    }
+
+    /// The Steamworks SDK folder holding `libsteam_api.dylib`.
+    var steamworksSDKFolder: URL {
+        get { access(keyPath: \.steamworksSDKFolder); return WorkshopSyncSettings.sdkFolder }
+        set { withMutation(keyPath: \.steamworksSDKFolder) { WorkshopSyncSettings.sdkFolder = newValue } }
+    }
+
     var restoresOnLaunch: Bool {
         get { access(keyPath: \.restoresOnLaunch); return recentStore.restoresOnLaunch }
         set { withMutation(keyPath: \.restoresOnLaunch) { recentStore.restoresOnLaunch = newValue } }
@@ -53,6 +68,10 @@ final class AppModel {
     @ObservationIgnored private var refreshTimer: Timer?
     @ObservationIgnored private var refreshClients = 0
     @ObservationIgnored private var workshopWatcher: WorkshopFolderWatcher?
+    /// Observable itself; views read its phase and downloads directly.
+    @ObservationIgnored let workshopSync = WorkshopSync(launcher: WorkshopSyncSettings.launchHelper)
+    @ObservationIgnored private var workshopSyncTimer: Timer?
+    @ObservationIgnored private var lastAutomaticSync: Date?
 
     init(windowManager: DesktopWindowManager) {
         self.windowManager = windowManager
@@ -230,10 +249,66 @@ final class AppModel {
             self?.applyWorkshopChanges(changes, status: status)
         }
         workshopWatcher = watcher
+
+        // Authors update items without the subscriptions changing, and only a
+        // Steam session finds those updates, so check periodically too.
+        workshopSyncTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.workshopSyncEnabled else { return }
+                self.workshopSync.sync()
+            }
+        }
+        if workshopSyncEnabled { workshopSync.sync() }
+    }
+
+    /// Turning sync on explains what it does first, since the first session
+    /// can download many gigabytes and shows the user as playing.
+    func setWorkshopSyncEnabled(_ enabled: Bool) {
+        guard enabled else {
+            workshopSyncEnabled = false
+            return
+        }
+        let missing = workshopItemsToDownload.count
+        let alert = NSAlert()
+        alert.messageText = "Download Steam Workshop subscriptions automatically?"
+        var details = "While syncing, Steam shows you as playing Wallpaper Engine. The session ends when downloads finish."
+        if missing > 0 {
+            let items = missing == 1 ? "1 subscribed item isn’t" : "\(missing) subscribed items aren’t"
+            details = "\(items) on this Mac yet. Steam will download them now, which can use a lot of disk space.\n\n" + details
+        }
+        alert.informativeText = details
+        alert.addButton(withTitle: "Turn On")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        workshopSyncEnabled = true
+    }
+
+    func chooseSteamworksSDKFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the unzipped Steamworks SDK folder (it contains “redistributable_bin”)"
+        panel.directoryURL = steamworksSDKFolder
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        steamworksSDKFolder = url
+        if workshopSyncEnabled, case .problem = workshopSync.phase { workshopSync.sync() }
+    }
+
+    func syncWorkshopNow() {
+        workshopSync.sync()
+    }
+
+    /// Subscribed items with no folder that haven't been found unavailable.
+    var workshopItemsToDownload: [String] {
+        (workshopStatus?.notDownloadedIDs ?? []).filter { !workshopSync.unavailableIDs.contains($0) }
     }
 
     func applyWorkshopChanges(_ changes: [WorkshopChange], status: WorkshopStatus) {
         if status != workshopStatus { workshopStatus = status }
+        startSyncForNewSubscriptions()
         for change in changes { library.refreshFolder(named: change.id) }
 
         guard let active = windowManager.currentProject?.libraryPath,
@@ -247,6 +322,17 @@ final class AppModel {
         case .added:
             break
         }
+    }
+
+    /// A subscription made on the website shows up in Steam's files before
+    /// it is downloaded; start a session to fetch it. Rate-limited so items
+    /// Steam keeps refusing can't cause a loop.
+    private func startSyncForNewSubscriptions() {
+        guard workshopSyncEnabled, !workshopSync.isRunning, !workshopItemsToDownload.isEmpty,
+              workshopSync.phase != .problem(.notOwned), workshopSync.phase != .problem(.helperMissing) else { return }
+        if let last = lastAutomaticSync, Date().timeIntervalSince(last) < 5 * 60 { return }
+        lastAutomaticSync = Date()
+        workshopSync.sync()
     }
 
     // MARK: - Windows

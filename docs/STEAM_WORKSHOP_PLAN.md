@@ -148,7 +148,45 @@ App integration:
 **Limitation:** Steam may not download 431960 items until something asks for them. That's
 what Phase 2 fixes.
 
-## Phase 2 — Active sync through the SDK
+## Phase 2 — Active sync through the SDK (done)
+
+Status (2026-10-08): committed on `workshop/steam-sync`.
+- `Sources/SteamWorkshopHelper/main.cpp`: a C++ helper that loads `libsteam_api.dylib`
+  with `dlopen` and resolves the flat API with `dlsym`. It uses SDK headers only for types,
+  and uses manual callback dispatch.
+- `SteamLibrary`: `WorkshopHelperEvent`/`WorkshopHelperProcess` (protocol and process) and
+  `WorkshopSync` (sync engine, `@Observable`).
+- App:
+  - `WorkshopSyncSettings` (toggle, SDK folder, launching the helper)
+  - Settings → Steam Workshop pane
+  - Library → Downloads sidebar entry and view
+
+How it differs from the original design:
+- **Build:** `Package.swift` adds the helper target only when SDK headers exist at build
+  time (`STEAMWORKS_SDK`, or `~/sdk`). Builds without the SDK still work; Settings then
+  reports "helper missing".
+- **One session per sync pass.** The helper runs until nothing is left to download, waits
+  20 s for late callbacks, then exits, so the "In-game" status only lasts as long as the sync.
+- **Triggers:**
+  - turning sync on (with a confirmation that states how many items will download)
+  - launch, when sync is on
+  - the Phase 1 watcher seeing subscriptions with no folder (at most once per 5 min)
+  - every 6 h, to catch author updates
+  - Sync Now
+- **Protocol:** commands are plain text lines (`download <id>…`, `details <id>…`,
+  `subscribe`, `unsubscribe`, `refresh`, `quit`); events are JSON lines.
+- **Placeholder tiles live in a Downloads view** (sidebar entry shown while anything is
+  queued, downloading or unavailable), not mixed into the wallpaper grid. Their titles and
+  previews come from a details query.
+- **Not done:** progress in the inspector for installed items that are updating, and tag
+  enrichment.
+
+Live check (2026-10-08, real Steam):
+- The sync found 3 subscribed items without folders.
+- It repaired 2 of them; Steam had marked them installed although their folders were gone.
+- It marked 920933904 unavailable (AccessDenied).
+- It ended the session on its own: phase back to idle, helper exited.
+
 
 ### `SteamWorkshopHelper` (separate executable)
 

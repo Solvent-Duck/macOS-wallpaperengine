@@ -11,6 +11,8 @@ enum GallerySortOrder: String, CaseIterable {
 /// What the library sidebar shows.
 enum LibraryFilter: Hashable {
     case all, favorites, recent
+    /// Workshop subscriptions being downloaded (not wallpapers yet).
+    case downloads
     case type(WallpaperType)
     case tag(String)
 }
@@ -62,6 +64,7 @@ final class GalleryViewModel: ObservableObject {
             case .all: return true
             case .favorites: return isFavorite(wallpaper)
             case .recent: return wallpaper.libraryPath.map(recents.contains) ?? false
+            case .downloads: return false
             case .type(let type): return wallpaper.type == type
             case .tag(let tag): return wallpaper.tags?.contains(tag) ?? false
             }

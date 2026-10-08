@@ -15,13 +15,15 @@ public struct WorkshopStatus: Equatable, Sendable {
     /// Nil when the subscriptions file couldn't be read.
     public var subscribed: Int?
     public var installed: Int
-    /// Subscribed items with no installed folder in any library.
-    public var notDownloaded: Int?
+    /// Subscribed items with no installed folder in any library; nil when
+    /// the subscriptions file couldn't be read.
+    public var notDownloadedIDs: [String]?
+    public var notDownloaded: Int? { notDownloadedIDs?.count }
 
-    public init(subscribed: Int?, installed: Int, notDownloaded: Int?) {
+    public init(subscribed: Int?, installed: Int, notDownloadedIDs: [String]?) {
         self.subscribed = subscribed
         self.installed = installed
-        self.notDownloaded = notDownloaded
+        self.notDownloadedIDs = notDownloadedIDs
     }
 }
 
@@ -160,7 +162,7 @@ public final class WorkshopFolderWatcher: @unchecked Sendable {
         return WorkshopStatus(
             subscribed: subscriptions?.ids.count,
             installed: installed.count,
-            notDownloaded: subscriptions.map { $0.ids.filter { !installed.contains($0) }.count }
+            notDownloadedIDs: subscriptions.map { $0.ids.filter { !installed.contains($0) } }
         )
     }
 

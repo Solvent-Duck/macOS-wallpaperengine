@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import SteamLibrary
 import SwiftUI
 
 /// The wallpaper library: sidebar filters, a grid of wallpapers and an
@@ -16,7 +17,7 @@ struct GalleryView: View {
 
     var body: some View {
         NavigationSplitView {
-            LibrarySidebar(library: library)
+            LibrarySidebar(library: library, sync: appModel.workshopSync)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
             content
@@ -76,12 +77,17 @@ struct GalleryView: View {
         case .all: return "All Wallpapers"
         case .favorites: return "Favorites"
         case .recent: return "Recent"
+        case .downloads: return "Downloads"
         case .type(let type): return type.displayName
         case .tag(let tag): return tag.capitalized
         }
     }
 
     private var subtitle: String {
+        if library.filter == .downloads {
+            let count = appModel.workshopSync.activeDownloads.count
+            return count == 1 ? "1 item" : "\(count) items"
+        }
         if library.isScanning && library.wallpapers.isEmpty { return "Scanning…" }
         let count = library.filteredWallpapers.count
         return count == 1 ? "1 wallpaper" : "\(count) wallpapers"
@@ -92,7 +98,9 @@ struct GalleryView: View {
     @ViewBuilder
     private var content: some View {
         let wallpapers = library.filteredWallpapers
-        if library.isScanning && library.wallpapers.isEmpty {
+        if library.filter == .downloads {
+            WorkshopDownloadsView(sync: appModel.workshopSync)
+        } else if library.isScanning && library.wallpapers.isEmpty {
             ProgressView("Scanning wallpapers…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if library.wallpapers.isEmpty {
@@ -289,6 +297,7 @@ extension WallpaperType {
 
 private struct LibrarySidebar: View {
     @ObservedObject var library: GalleryViewModel
+    let sync: WorkshopSync
     @State private var showsTags = true
 
     var body: some View {
@@ -300,6 +309,9 @@ private struct LibrarySidebar: View {
                 row("All Wallpapers", icon: "square.grid.2x2", filter: .all, count: library.wallpapers.count)
                 row("Favorites", icon: "heart", filter: .favorites, count: nil)
                 row("Recent", icon: "clock", filter: .recent, count: nil)
+                if !sync.downloads.isEmpty || library.filter == .downloads {
+                    row("Downloads", icon: "arrow.down.circle", filter: .downloads, count: sync.activeDownloads.count)
+                }
             }
             if library.availableTypes.count > 1 {
                 Section("Types") {
@@ -475,9 +487,14 @@ struct PreviewThumbnail: View {
                 image = cached
                 return
             }
-            let cgImage = await Task.detached(priority: .utility) {
-                ThumbnailCache.decode(url)
-            }.value
+            let cgImage: CGImage?
+            if url.isFileURL {
+                cgImage = await Task.detached(priority: .utility) { ThumbnailCache.decode(url) }.value
+            } else {
+                // Workshop previews for items not downloaded yet.
+                let data = try? await URLSession.shared.data(from: url).0
+                cgImage = await Task.detached(priority: .utility) { data.flatMap(ThumbnailCache.decode(data:)) }.value
+            }
             guard !Task.isCancelled else { return }
             if let cgImage {
                 let decoded = NSImage(cgImage: cgImage, size: .zero)
@@ -499,7 +516,14 @@ private enum ThumbnailCache {
 
     /// First frame, downscaled to fit the largest card at 2x.
     nonisolated static func decode(_ url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        CGImageSourceCreateWithURL(url as CFURL, nil).flatMap(thumbnail)
+    }
+
+    nonisolated static func decode(data: Data) -> CGImage? {
+        CGImageSourceCreateWithData(data as CFData, nil).flatMap(thumbnail)
+    }
+
+    private nonisolated static func thumbnail(from source: CGImageSource) -> CGImage? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

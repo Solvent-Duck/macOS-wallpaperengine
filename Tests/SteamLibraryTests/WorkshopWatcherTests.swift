@@ -65,13 +65,13 @@ struct WorkshopFolderWatcherTests {
 
         try await waitUntil { deliveries.count == 1 }
         #expect(deliveries[0].0.isEmpty)
-        #expect(deliveries[0].1 == WorkshopStatus(subscribed: 2, installed: 1, notDownloaded: 1))
+        #expect(deliveries[0].1 == WorkshopStatus(subscribed: 2, installed: 1, notDownloadedIDs: ["2"]))
 
         try steam.installItem("2")
         try await waitUntil { deliveries.count >= 2 }
         #expect(deliveries[1].0.map(\.id) == ["2"])
         #expect(deliveries[1].0.first?.kind == .added)
-        #expect(deliveries[1].1 == WorkshopStatus(subscribed: 2, installed: 2, notDownloaded: 0))
+        #expect(deliveries[1].1 == WorkshopStatus(subscribed: 2, installed: 2, notDownloadedIDs: []))
     }
 
     private func waitUntil(_ condition: () -> Bool) async throws {
