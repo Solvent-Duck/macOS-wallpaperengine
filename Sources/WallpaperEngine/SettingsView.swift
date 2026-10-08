@@ -79,6 +79,16 @@ private struct GeneralSettings: View {
                     Text("Starts \(abbreviated(model.loginItemExecutablePath)). Rebuild in place to keep it working.")
                 }
             }
+            Section {
+                LabeledContent("Multiple displays") {
+                    Text("Not supported yet")
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Displays")
+            } footer: {
+                Text("With more than one display connected, the same wallpaper is shown on every display. Choosing a wallpaper per display isn’t available.")
+            }
             Section("Wallpaper Library") {
                 LabeledContent(model.usesCustomLibraryFolder ? "Folder" : "Folders") {
                     VStack(alignment: .trailing, spacing: 2) {

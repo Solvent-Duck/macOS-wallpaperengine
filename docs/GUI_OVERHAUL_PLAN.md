@@ -40,7 +40,7 @@ holding 6,401 authored properties.
 | A6 | Closing the gallery sets activation policy to `.accessory` even if the properties panel is open, so the panel loses focus and the Dock icon vanishes underneath it. |
 | A7 | Pause state is duplicated (`AppDelegate.isPaused` vs `DesktopWindowManager.isManuallyPaused`). Occlusion and sleep don't update the menu. |
 | A8 | The last wallpaper isn't restored on launch (only the `run.sh <path>` CLI arg), and there's no launch-at-login. As a daily driver it's useless after a reboot. |
-| A9 | One wallpaper is mirrored to every display. There's no per-display assignment. |
+| A9 | One wallpaper is mirrored to every display. There's no per-display assignment. **Decision (2026-10-07): multi-monitor is unsupported for now; A9 is out of scope.** |
 | A10 | The menu is a flat dump: status lines shown as disabled items, debug actions (Copy Diagnostics) beside user actions, and Audio Response / Media Integration exposed as top-level concepts. |
 
 ## 2. Target design
@@ -65,7 +65,7 @@ system glass materials. Drop the hand-built NSMenu/NSPanel/NSWindow plumbing.
    - General: library folders (multiple, add/remove; both default locations auto-detected), launch at login (`SMAppService`), restore on launch.
    - Playback: pause when another app is fullscreen / on battery / on low power, FPS cap, default mute.
    - Audio and Media: the current Audio Response and Media Integration menus, moved here with their status text and the Connect buttons.
-   - Displays: same wallpaper on all displays vs per-display.
+   - Displays: ~~same wallpaper on all displays vs per-display~~ — shows "Multiple displays: not supported yet" (multi-monitor out of scope).
    - Advanced: Copy Diagnostics, reveal logs, reset all wallpaper settings.
 
 The floating Properties panel goes away. Customization lives in the Library inspector,
@@ -131,7 +131,8 @@ NavigationSplitView with sidebar, grid and inspector. Favorites, recents, a
 thumbnail cache, an active badge, and the Apply flow. The properties view moves into the
 inspector, and the NSPanel is deleted.
 
-**Phase 4: playback controls and displays (about 2 days)**
+**Phase 4: playback controls and displays (about 2 days)** — *done for playback (C6);
+per-display assignment (A9) dropped: multi-monitor is marked unsupported.*
 General controls (C6) for video and web, then scene volume. Per-display assignment (A9)
 requires `DesktopWindowManager` to hold a project and renderer per window instead of
 one project for all of them. That's the largest backend change in the plan, so it goes last.

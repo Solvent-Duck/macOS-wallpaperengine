@@ -6,7 +6,7 @@ A macOS application that plays animated [Wallpaper Engine](https://store.steampo
 
 - **Video wallpapers** — MP4, MOV, M4V with seamless looping
 - **Web wallpapers** — HTML/JS/CSS bundles with Wallpaper Engine JavaScript API polyfill
-- **Multi-monitor support** — one wallpaper window per connected display
+- **Multiple monitors: not supported yet** — the current wallpaper is mirrored to every connected display; per-display wallpapers, spanning and display-specific settings are not implemented or tested
 - **Smart power management** — automatically pauses rendering when the desktop is covered
 - **Wallpaper library** — SwiftUI window with a sidebar (favorites, recent, types, tags), a thumbnail grid and an inspector for details, Apply and per-wallpaper settings
 - **Menu bar controls** — pause/resume, mute/unmute audio, clear wallpaper, open gallery
@@ -164,7 +164,7 @@ Long-term, this should support tag-driven wallpaper selection so an external age
 
 ## Architecture
 
-The app creates borderless, transparent `NSWindow` instances positioned at the desktop window level — above the system wallpaper image but below Finder's desktop icons. Each connected display gets its own window.
+The app creates borderless, transparent `NSWindow` instances positioned at the desktop window level — above the system wallpaper image but below Finder's desktop icons. Each connected display gets its own window showing the same wallpaper (multi-monitor setups are not supported yet — see Features).
 
 ```
 ┌─────────────────────────────┐

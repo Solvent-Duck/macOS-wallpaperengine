@@ -353,11 +353,13 @@ The app also pauses automatically when your desktop is fully covered by other wi
 
 ---
 
-## Multi-monitor support
+## Multiple monitors (not supported yet)
 
-The app supports multiple displays.
-Each connected monitor gets its own wallpaper window automatically.
-All monitors show the same wallpaper at the same time.
+Multi-monitor setups are **not supported yet**.
+If more than one display is connected, the app currently shows the same wallpaper on every display,
+but you cannot choose a different wallpaper per display, span one wallpaper across displays,
+or change settings for one display only. Behaviour when displays are connected, disconnected
+or rearranged while the app is running has not been tested.
 
 ---
 
