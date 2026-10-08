@@ -1055,7 +1055,7 @@ final class MaterialBinder {
     }
 
     private static func daytimeFraction() -> Double {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let components = Calendar.current.dateComponents([.hour, .minute], from: SceneClock.now())
         let minutes = Double((components.hour ?? 0) * 60 + (components.minute ?? 0))
         return minutes / (24.0 * 60.0)
     }

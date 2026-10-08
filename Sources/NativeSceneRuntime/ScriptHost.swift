@@ -1012,7 +1012,7 @@ public final class ScriptHost: @unchecked Sendable {
     /// Fraction of the local day in [0, 1), matching WE's engine.timeOfDay.
     private static func currentTimeOfDay() -> Double {
         let calendar = Calendar.current
-        let components = calendar.dateComponents([.hour, .minute, .second], from: Date())
+        let components = calendar.dateComponents([.hour, .minute, .second], from: SceneClock.now())
         let seconds = Double((components.hour ?? 0) * 3600 + (components.minute ?? 0) * 60 + (components.second ?? 0))
         return seconds / 86_400.0
     }

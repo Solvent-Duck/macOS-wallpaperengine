@@ -1,4 +1,5 @@
 import Foundation
+import NativeSceneCore
 import simd
 
 enum ParticleRemap {
@@ -110,7 +111,7 @@ enum ParticleRemap {
     }
 
     static func currentTimeOfDay() -> Float {
-        let components = Calendar.current.dateComponents([.hour, .minute, .second], from: Date())
+        let components = Calendar.current.dateComponents([.hour, .minute, .second], from: SceneClock.now())
         return Float((components.hour ?? 0) * 3600 + (components.minute ?? 0) * 60 + (components.second ?? 0)) / 86400
     }
 }

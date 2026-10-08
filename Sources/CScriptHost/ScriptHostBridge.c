@@ -235,6 +235,32 @@ static JSValue console_message(JSContext* ctx, JSValueConst this_value, int argc
     return JS_UNDEFINED;
 }
 
+// Opt-in reproducible clock for headless captures (see SceneClock.swift).
+// `Date` follows the pinned epoch plus scene runtime so time-based animation
+// still advances; `Math.random` becomes a fixed-seed mulberry32 stream.
+#define WE_PINNED_EPOCH_MS "1767268800000"
+static const char* WE_DETERMINISTIC_PRELUDE =
+    "(function() {\n"
+    "  const RealDate = Date;\n"
+    "  const now = () => " WE_PINNED_EPOCH_MS " + Math.round(1000 * (Number(globalThis.__engine?.runtime) || 0));\n"
+    "  function PinnedDate(...args) {\n"
+    "    if (new.target === undefined) return new RealDate(now()).toString();\n"
+    "    return Reflect.construct(RealDate, args.length ? args : [now()], new.target);\n"
+    "  }\n"
+    "  PinnedDate.prototype = RealDate.prototype;\n"
+    "  PinnedDate.now = now;\n"
+    "  PinnedDate.UTC = RealDate.UTC;\n"
+    "  PinnedDate.parse = RealDate.parse;\n"
+    "  globalThis.Date = PinnedDate;\n"
+    "  let seed = 0x2F6B3A1D;\n"
+    "  Math.random = function() {\n"
+    "    seed = (seed + 0x6D2B79F5) | 0;\n"
+    "    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);\n"
+    "    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;\n"
+    "    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n"
+    "  };\n"
+    "})();\n";
+
 WEScriptHost* we_script_host_create(void) {
     WEScriptHost* host = calloc(1, sizeof(WEScriptHost));
     if (host == NULL) return NULL;
@@ -254,6 +280,11 @@ WEScriptHost* we_script_host_create(void) {
     JS_SetPropertyStr(host->context, console, "error", JS_NewCFunctionMagic(host->context, console_message, "error", 0, JS_CFUNC_generic_magic, 1));
     JS_SetPropertyStr(host->context, global, "console", console);
     JS_FreeValue(host->context, global);
+    if (getenv("WE_DETERMINISTIC") != NULL) {
+        JSValue pinned = JS_Eval(host->context, WE_DETERMINISTIC_PRELUDE, strlen(WE_DETERMINISTIC_PRELUDE),
+                                 "<deterministic>", JS_EVAL_TYPE_GLOBAL);
+        JS_FreeValue(host->context, pinned);
+    }
     return host;
 }
 
