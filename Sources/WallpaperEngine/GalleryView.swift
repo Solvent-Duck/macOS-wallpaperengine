@@ -8,6 +8,9 @@ struct GalleryView: View {
     @ObservedObject var library: GalleryViewModel
     let appModel: AppModel
     @State private var showsInspector = true
+    @State private var gridWidth: CGFloat = 0
+    @State private var isDropTargeted = false
+    @FocusState private var gridFocused: Bool
 
     private let columns = [GridItem(.adaptive(minimum: 190, maximum: 280), spacing: 16)]
 
@@ -17,6 +20,28 @@ struct GalleryView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard let url = urls.first else { return false }
+                    library.selectedPath = url.standardizedFileURL.path
+                    Task { await appModel.load(url) }
+                    return true
+                } isTargeted: { isDropTargeted = $0 }
+                .overlay {
+                    if isDropTargeted {
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                            .padding(8)
+                            .overlay {
+                                Label("Drop to apply this wallpaper", systemImage: "arrow.down.doc")
+                                    .font(.headline)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(.regularMaterial, in: Capsule())
+                            }
+                            .allowsHitTesting(false)
+                    }
+                }
                 .inspector(isPresented: $showsInspector) {
                     inspector
                         .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
@@ -79,16 +104,49 @@ struct GalleryView: View {
                 Text(emptyFilterMessage)
             }
         } else {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(wallpapers, id: \.libraryPath) { wallpaper in
-                        card(for: wallpaper)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(wallpapers, id: \.libraryPath) { wallpaper in
+                            card(for: wallpaper)
+                                .id(wallpaper.libraryPath)
+                        }
                     }
+                    .padding(16)
                 }
-                .padding(16)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
+                .focusable()
+                .focused($gridFocused)
+                .focusEffectDisabled()
+                .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow, .return]) { press in
+                    handleKey(press.key, proxy: proxy)
+                }
             }
             .background(Color(nsColor: .underPageBackgroundColor))
         }
+    }
+
+    /// Cards per row, matching the adaptive grid (16 pt padding and spacing).
+    private var columnCount: Int {
+        max(1, Int((gridWidth - 32 + 16) / (190 + 16)))
+    }
+
+    private func handleKey(_ key: KeyEquivalent, proxy: ScrollViewProxy) -> KeyPress.Result {
+        switch key {
+        case .return:
+            guard let wallpaper = library.selectedWallpaper else { return .ignored }
+            apply(wallpaper)
+            return .handled
+        case .leftArrow: library.moveSelection(.left, columns: columnCount)
+        case .rightArrow: library.moveSelection(.right, columns: columnCount)
+        case .upArrow: library.moveSelection(.up, columns: columnCount)
+        case .downArrow: library.moveSelection(.down, columns: columnCount)
+        default: return .ignored
+        }
+        if let path = library.selectedPath {
+            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(path) }
+        }
+        return .handled
     }
 
     private func card(for wallpaper: WallpaperProject) -> some View {
@@ -99,7 +157,10 @@ struct GalleryView: View {
             isActive: path != nil && path == appModel.snapshot.directoryPath,
             isLoading: appModel.loadingName != nil && appModel.loadingName == wallpaper.directoryURL?.lastPathComponent,
             isFavorite: library.isFavorite(wallpaper),
-            onSelect: { library.selectedPath = path },
+            onSelect: {
+                library.selectedPath = path
+                gridFocused = true
+            },
             onApply: { apply(wallpaper) },
             onToggleFavorite: { library.toggleFavorite(wallpaper) }
         )
@@ -139,18 +200,28 @@ struct GalleryView: View {
 
     private var emptyLibrary: some View {
         ContentUnavailableView {
-            Label("No Wallpapers Found", systemImage: "photo.on.rectangle.angled")
+            Label("No Wallpapers Yet", systemImage: "photo.on.rectangle.angled")
         } description: {
-            if library.scannedDirectories.isEmpty {
-                Text("Neither ~/Wallpaper Projects nor the Steam Workshop folder exists.")
-            } else {
-                Text("Looked in " + library.scannedDirectories
-                    .map { ($0.path as NSString).abbreviatingWithTildeInPath }
-                    .joined(separator: " and "))
+            VStack(spacing: 8) {
+                if library.scannedDirectories.isEmpty {
+                    Text("Neither ~/Wallpaper Projects nor the Steam Workshop folder exists.")
+                } else {
+                    Text("Looked in " + library.scannedDirectories
+                        .map { ($0.path as NSString).abbreviatingWithTildeInPath }
+                        .joined(separator: " and ") + ".")
+                }
+                Text("Subscribe to wallpapers in Wallpaper Engine’s Steam Workshop, then copy their folders into ~/Wallpaper Projects — or choose the folder that already holds them. You can also drop a wallpaper folder or video here to apply it.")
             }
         } actions: {
-            Button("Choose Folder…") { appModel.chooseLibraryFolder() }
-                .buttonStyle(.borderedProminent)
+            if appModel.canCreateDefaultLibraryFolder {
+                Button("Create Wallpaper Projects Folder") { appModel.createDefaultLibraryFolder() }
+                    .buttonStyle(.borderedProminent)
+                Button("Choose Folder…") { appModel.chooseLibraryFolder() }
+            } else {
+                Button("Choose Folder…") { appModel.chooseLibraryFolder() }
+                    .buttonStyle(.borderedProminent)
+                Button("Rescan") { appModel.rescanLibrary() }
+            }
         }
     }
 
@@ -320,9 +391,22 @@ struct WallpaperCard: View {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(wallpaper.title)
+        .accessibilityValue(accessibilityStatus)
+        .accessibilityHint("Double-click or press Return to apply")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(named: "Apply", onApply)
+        .accessibilityAction(.default, onSelect)
+        .accessibilityAction(named: isActive ? "Reapply" : "Apply", onApply)
+        .accessibilityAction(named: isFavorite ? "Remove from Favorites" : "Add to Favorites", onToggleFavorite)
+    }
+
+    private var accessibilityStatus: String {
+        var parts = [subtitle]
+        if isActive { parts.append("Active") }
+        if isFavorite { parts.append("Favorite") }
+        if isLoading { parts.append("Loading") }
+        return parts.joined(separator: ", ")
     }
 
     private var subtitle: String {

@@ -46,6 +46,31 @@ struct LibraryModelTests {
         #expect(library.filteredWallpapers.map(\.title) == ["Forest"])
     }
 
+    @Test func keyboardMovesSelectionThroughTheGrid() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeProject("4", type: "web", title: "Garden", tags: [])
+        try makeProject("5", type: "web", title: "Harbor", tags: [])
+        let library = try await scannedLibrary()
+        library.sortOrder = .titleAscending
+        let titles = { library.selectedWallpaper?.title }
+        // Anime Room, Beach, Forest, Garden, Harbor — two columns.
+        library.moveSelection(.right, columns: 2)
+        #expect(titles() == "Anime Room")
+        library.moveSelection(.down, columns: 2)
+        #expect(titles() == "Forest")
+        library.moveSelection(.right, columns: 2)
+        #expect(titles() == "Garden")
+        library.moveSelection(.down, columns: 2)
+        #expect(titles() == "Harbor") // partial last row clamps to the last card
+        library.moveSelection(.down, columns: 2)
+        #expect(titles() == "Harbor")
+        library.moveSelection(.up, columns: 2)
+        #expect(titles() == "Forest")
+        library.searchText = "zzz"
+        library.moveSelection(.left, columns: 2) // nothing visible: no change, no crash
+        #expect(titles() == "Forest")
+    }
+
     @Test func recentFilterKeepsRecencyOrder() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let library = try await scannedLibrary()

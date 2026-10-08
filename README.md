@@ -124,7 +124,7 @@ Click **Browse Wallpapers…** in the menu bar popover to open the library windo
 - **Grid** — preview thumbnails; the active wallpaper is badged; ♡ toggles a favorite; right-click for Apply / Favorite / Show in Finder
 - **Inspector** — large preview, type, Workshop link, tags, description, **Apply**, playback (volume; speed and Fill/Fit/Stretch scaling for videos) and the wallpaper's settings. Settings of the active wallpaper apply live; others are saved and used when the wallpaper is applied.
 
-Click a card to inspect it; double-click to set it as your desktop background. **Customize** in the menu bar popover opens the library on the active wallpaper.
+Click a card to inspect it; double-click (or press Return) to set it as your desktop background. Arrow keys move the selection. Drop a wallpaper folder or file onto the grid to apply it. With an empty library, the window explains where wallpapers come from and offers to create `~/Wallpaper Projects`. **Customize** in the menu bar popover opens the library on the active wallpaper.
 
 ### Installing Wallpapers
 

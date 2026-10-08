@@ -278,6 +278,24 @@ final class AppModel {
         refresh()
     }
 
+    /// First run: offer to create `~/Wallpaper Projects` when no library folder exists.
+    var canCreateDefaultLibraryFolder: Bool {
+        LibraryFolders.customDirectory == nil && LibraryFolders.directories.isEmpty
+    }
+
+    /// Create `~/Wallpaper Projects`, show it in Finder for copying wallpapers in, and rescan.
+    func createDefaultLibraryFolder() {
+        guard let folder = LibraryFolders.defaultDirectories.first else { return }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+        rescanLibrary()
+        refresh()
+    }
+
     func useDefaultLibraryFolders() {
         LibraryFolders.useDefaults()
         rescanLibrary()

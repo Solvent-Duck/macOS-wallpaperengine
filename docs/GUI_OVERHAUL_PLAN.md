@@ -1,6 +1,11 @@
 # GUI / UX Overhaul Plan
 
-Status: proposal, 2026-10-07. Scope: `Sources/WallpaperEngine` UI layer only
+Status (2026-10-07): phases 0–4 implemented (4 = playback controls only;
+multi-monitor marked unsupported), phase 5 in progress — keyboard navigation,
+drop-to-apply, first-run library guidance and accessibility labels done; Quick
+Look-style preview not done. Originally a proposal.
+
+Scope: `Sources/WallpaperEngine` UI layer only
 (AppDelegate, Gallery*, PropertiesView, WallpaperProperty, DesktopWindowManager's
 UI-facing API). Renderer parity work is out of scope except where a control has no
 backend at all.

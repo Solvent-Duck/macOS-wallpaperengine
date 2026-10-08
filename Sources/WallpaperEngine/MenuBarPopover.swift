@@ -89,6 +89,7 @@ struct MenuBarPopover: View {
             }
             .frame(width: 96, height: 54)
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(snapshot.title ?? "No wallpaper")
@@ -172,6 +173,7 @@ struct MenuBarPopover: View {
             .controlSize(.small)
             .disabled(snapshot.isMuted)
             .help(snapshot.isMuted ? "Unmute to change the volume" : "Wallpaper volume")
+            .accessibilityLabel("Volume")
         }
     }
 
@@ -214,6 +216,7 @@ struct MenuBarPopover: View {
                 Image(systemName: "folder")
             }
             .help("Open a wallpaper file or folder…")
+            .accessibilityLabel("Open Wallpaper File or Folder")
         }
         .controlSize(.large)
     }
@@ -233,12 +236,14 @@ struct MenuBarPopover: View {
                 Image(systemName: "gearshape")
             }
             .help("Settings…")
+            .accessibilityLabel("Settings")
             Button {
                 model.quit()
             } label: {
                 Image(systemName: "power")
             }
             .help("Quit Wallpaper Engine")
+            .accessibilityLabel("Quit Wallpaper Engine")
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)

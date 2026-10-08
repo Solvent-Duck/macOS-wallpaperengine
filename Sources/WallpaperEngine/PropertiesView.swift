@@ -117,6 +117,7 @@ private struct PropertyRow: View {
             HStack(spacing: 6) {
                 control
                     .frame(maxWidth: 240)
+                    .accessibilityLabel(label)
                 Button {
                     store.reset(prop)
                 } label: {
@@ -124,18 +125,24 @@ private struct PropertyRow: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Reset to default")
+                .accessibilityLabel("Reset \(label) to default")
                 .opacity(store.isModified(prop) ? 1 : 0)
                 .disabled(!store.isModified(prop))
                 .accessibilityHidden(!store.isModified(prop))
             }
         } label: {
-            Text(PropertyLayout.labelText(prop.text).map { String($0.characters) } ?? prop.key)
+            Text(label)
                 .lineLimit(2)
         }
         .contextMenu {
             Button("Reset to Default") { store.reset(prop) }
                 .disabled(!store.isModified(prop))
         }
+    }
+
+    /// The authored label with WE's HTML removed.
+    private var label: String {
+        PropertyLayout.labelText(prop.text).map { String($0.characters) } ?? prop.key
     }
 
     @ViewBuilder
@@ -297,6 +304,7 @@ private struct FileControl: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
                 .help("Clear")
+                .accessibilityLabel("Clear file")
             }
         }
     }

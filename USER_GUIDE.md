@@ -272,6 +272,8 @@ You can also:
 - Click the ♡ on a wallpaper to add it to Favorites
 - Sort by title, type or number of tags
 - Right-click a wallpaper to apply it, favorite it or show it in Finder
+- Use the **arrow keys** to move between wallpapers and **Return** to apply the selected one
+- Drag a wallpaper folder, `project.json`, video or `.pkg` file from Finder onto the library to apply it
 
 The wallpaper that is on your desktop right now is marked **Active**.
 

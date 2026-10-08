@@ -99,6 +99,29 @@ final class GalleryViewModel: ObservableObject {
         return wallpapers.first { $0.libraryPath == selectedPath }
     }
 
+    enum Move { case left, right, up, down }
+
+    /// Move the selection through the visible grid, `columns` cards per row.
+    /// With nothing selected, any move selects the first wallpaper.
+    func moveSelection(_ move: Move, columns: Int) {
+        let paths = filteredWallpapers.compactMap(\.libraryPath)
+        guard !paths.isEmpty else { return }
+        guard let current = selectedPath.flatMap(paths.firstIndex(of:)) else {
+            selectedPath = paths[0]
+            return
+        }
+        let step = max(1, columns)
+        let target: Int
+        switch move {
+        case .left: target = current - 1
+        case .right: target = current + 1
+        case .up: target = current - step
+        case .down: target = current + step
+        }
+        // Rows clamp at the ends; a partial last row is still reachable going down.
+        selectedPath = paths[min(max(target, 0), paths.count - 1)]
+    }
+
     func isFavorite(_ wallpaper: WallpaperProject) -> Bool {
         wallpaper.directoryURL.map { favorites.contains($0.lastPathComponent) } ?? false
     }

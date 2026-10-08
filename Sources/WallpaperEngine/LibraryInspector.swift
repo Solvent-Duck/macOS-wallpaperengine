@@ -63,6 +63,7 @@ struct LibraryInspector: View {
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .overlay { PreviewThumbnail(url: wallpaper.previewURL) }
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(wallpaper.title)
@@ -102,6 +103,7 @@ struct LibraryInspector: View {
                 }
                 .controlSize(.large)
                 .help(library.isFavorite(wallpaper) ? "Remove from Favorites" : "Add to Favorites")
+                .accessibilityLabel(library.isFavorite(wallpaper) ? "Remove from Favorites" : "Add to Favorites")
 
                 if let url = wallpaper.directoryURL {
                     Button {
@@ -111,6 +113,7 @@ struct LibraryInspector: View {
                     }
                     .controlSize(.large)
                     .help("Show in Finder")
+                    .accessibilityLabel("Show in Finder")
                 }
             }
 
@@ -190,6 +193,8 @@ private struct InspectorPlayback: View {
                         HStack(spacing: 6) {
                             Image(systemName: "speaker.fill").foregroundStyle(.secondary)
                             Slider(value: $settings.volume, in: 0...1)
+                                .accessibilityLabel("Volume")
+                                .accessibilityValue("\(Int((settings.volume * 100).rounded())) percent")
                             Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: 240)
