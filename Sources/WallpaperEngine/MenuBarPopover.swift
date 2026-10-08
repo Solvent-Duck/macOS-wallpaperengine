@@ -60,7 +60,10 @@ struct MenuBarPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             nowPlaying
-            if model.hasWallpaper { controls }
+            if model.hasWallpaper {
+                controls
+                if snapshot.supportsAudio { volume }
+            }
             if !model.recents.isEmpty { recents }
             library
             Divider()
@@ -151,6 +154,25 @@ struct MenuBarPopover: View {
         }
         .controlSize(.large)
         .labelStyle(VerticalLabelStyle())
+    }
+
+    private var volume: some View {
+        HStack(spacing: 8) {
+            Image(systemName: snapshot.isMuted ? "speaker.slash.fill" : "speaker.fill")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            Slider(value: Binding(
+                get: { snapshot.playback.volume },
+                set: { volume in
+                    var playback = snapshot.playback
+                    playback.volume = volume
+                    model.setPlayback(playback)
+                }
+            ), in: 0...1)
+            .controlSize(.small)
+            .disabled(snapshot.isMuted)
+            .help(snapshot.isMuted ? "Unmute to change the volume" : "Wallpaper volume")
+        }
     }
 
     // MARK: Recents

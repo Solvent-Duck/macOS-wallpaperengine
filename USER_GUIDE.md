@@ -286,6 +286,11 @@ To access them:
 2. Click **Customize** — or select any wallpaper in the Wallpaper Library
 
 The settings appear on the right side of the library, under the wallpaper's details, grouped into sections.
+
+The **Playback** section at the top has the same controls for every wallpaper of a type:
+- **Volume** — video, web and scene wallpapers (also in the menu bar popover, under the buttons)
+- **Speed** — video wallpapers, from 0.25× to 2×
+- **Scaling** — video wallpapers: **Fill** (crop to fill the screen), **Fit** (show the whole video) or **Stretch**
 Some controls only appear once you turn on the option they belong to.
 Changes to the wallpaper on your desktop take effect immediately.
 You can also change a wallpaper's settings before applying it; they are used when you apply it.

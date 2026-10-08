@@ -40,6 +40,18 @@ class VideoRenderer: WallpaperRenderer {
         set { player.isMuted = newValue }
     }
 
+    func applyPlayback(_ settings: PlaybackSettings) {
+        player.volume = Float(settings.volume)
+        // play() starts at defaultRate; also retime a video that is already playing.
+        player.defaultRate = Float(settings.rate)
+        if player.rate != 0 { player.rate = Float(settings.rate) }
+        switch settings.scaling {
+        case .fill: playerLayer.videoGravity = .resizeAspectFill
+        case .fit: playerLayer.videoGravity = .resizeAspect
+        case .stretch: playerLayer.videoGravity = .resize
+        }
+    }
+
     func play() {
         player.play()
         print("[VideoRenderer] Playing")

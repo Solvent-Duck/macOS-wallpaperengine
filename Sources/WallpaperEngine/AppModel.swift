@@ -18,6 +18,7 @@ final class AppModel {
         var isManuallyPaused = false
         var isMuted = true
         var supportsAudio = false
+        var playback = PlaybackSettings()
         var fps: Double = 0
         var audioSelection: AudioResponseSource = .off
         var audioStatus = ""
@@ -68,6 +69,7 @@ final class AppModel {
             isManuallyPaused: manager.isManuallyPaused,
             isMuted: manager.isMuted,
             supportsAudio: manager.supportsAudio,
+            playback: manager.playbackSettings,
             fps: manager.currentTitle == nil ? 0 : PerformanceMonitor.shared.currentFPS,
             audioSelection: manager.audioReactivity.selection,
             audioStatus: manager.audioReactivity.status,
@@ -167,6 +169,26 @@ final class AppModel {
     func toggleMute() {
         windowManager.isMuted.toggle()
         refresh()
+    }
+
+    /// Change the active wallpaper's volume, speed or scaling.
+    func setPlayback(_ settings: PlaybackSettings) {
+        windowManager.applyPlayback(settings)
+        refresh()
+    }
+
+    /// Playback settings as the inspector edits them: live for the active
+    /// wallpaper, saved for any other.
+    func playbackSettings(for project: WallpaperProject, isActive: Bool) -> PlaybackSettings {
+        isActive ? snapshot.playback : PlaybackSettings.load(for: project)
+    }
+
+    func setPlayback(_ settings: PlaybackSettings, for project: WallpaperProject, isActive: Bool) {
+        if isActive {
+            setPlayback(settings)
+        } else {
+            settings.save(for: project)
+        }
     }
 
     func clearWallpaper() {

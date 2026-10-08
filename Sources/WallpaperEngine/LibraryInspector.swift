@@ -25,6 +25,8 @@ struct LibraryInspector: View {
         Form {
             Section { header }
             if let fullProject {
+                InspectorPlayback(project: fullProject, isActive: isActive, appModel: appModel)
+                    .id("playback|\(wallpaper.libraryPath ?? "")|\(isActive)")
                 InspectorProperties(project: fullProject, isActive: isActive, appModel: appModel)
                     .id("\(wallpaper.libraryPath ?? "")|\(isActive)")
             } else {
@@ -157,6 +159,58 @@ private struct InspectorProperties: View {
                     Button("Reset All") { store.resetToDefaults() }
                         .disabled(!store.hasEditableProperties && store.onReset == nil)
                 }
+            }
+        }
+    }
+}
+
+/// Volume, speed and scaling: Wallpaper Engine's per-wallpaper playback settings.
+private struct InspectorPlayback: View {
+    let project: WallpaperProject
+    let isActive: Bool
+    let appModel: AppModel
+    @State private var settings: PlaybackSettings
+
+    init(project: WallpaperProject, isActive: Bool, appModel: AppModel) {
+        self.project = project
+        self.isActive = isActive
+        self.appModel = appModel
+        _settings = State(initialValue: appModel.playbackSettings(for: project, isActive: isActive))
+    }
+
+    private var capabilities: PlaybackSettings.Capabilities {
+        PlaybackSettings.Capabilities(type: project.resolvedType)
+    }
+
+    var body: some View {
+        if !capabilities.isEmpty {
+            Section("Playback") {
+                if capabilities.volume {
+                    LabeledContent("Volume") {
+                        HStack(spacing: 6) {
+                            Image(systemName: "speaker.fill").foregroundStyle(.secondary)
+                            Slider(value: $settings.volume, in: 0...1)
+                            Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: 240)
+                    }
+                }
+                if capabilities.rate {
+                    Picker("Speed", selection: $settings.rate) {
+                        ForEach(PlaybackSettings.rates, id: \.self) { rate in
+                            Text(rate == 1 ? "Normal" : String(format: "%g×", rate)).tag(rate)
+                        }
+                    }
+                }
+                if capabilities.scaling {
+                    Picker("Scaling", selection: $settings.scaling) {
+                        ForEach(VideoScaling.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+            .onChange(of: settings) { _, newValue in
+                appModel.setPlayback(newValue, for: project, isActive: isActive)
             }
         }
     }

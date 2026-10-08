@@ -46,6 +46,9 @@ class DesktopWindowManager {
     /// Live property values for the current wallpaper (defaults merged with user overrides).
     private var propertyValues: [String: String] = [:]
 
+    /// Volume, speed and scaling for the current wallpaper.
+    private(set) var playbackSettings = PlaybackSettings()
+
     /// The title of the currently loaded wallpaper, if any.
     var currentTitle: String? { currentProject?.resolvedTitle }
 
@@ -197,6 +200,8 @@ class DesktopWindowManager {
             let resolvedProperties = project.resolvedProperties
             propertyValues = mergedValues(properties: resolvedProperties, saved: saved)
             newRenderers.forEach { $0.applyProperties(resolvedProperties, values: propertyValues) }
+            playbackSettings = automationMode ? PlaybackSettings() : PlaybackSettings.load(for: project)
+            newRenderers.forEach { $0.applyPlayback(playbackSettings) }
             startMediaIntegrationIfNeeded()
 
             // Set the renderer's view as content on all desktop windows
@@ -309,6 +314,14 @@ class DesktopWindowManager {
             renderers.forEach { $0.applyProperty(prop, value: value) }
         }
         schedulePropertySave()
+    }
+
+    /// Apply and persist volume, speed and scaling for the current wallpaper.
+    func applyPlayback(_ settings: PlaybackSettings) {
+        guard let project = currentProject else { return }
+        playbackSettings = settings.clamped
+        renderers.forEach { $0.applyPlayback(playbackSettings) }
+        playbackSettings.save(for: project)
     }
 
     func resetProperties() -> Bool {

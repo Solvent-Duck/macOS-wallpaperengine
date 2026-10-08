@@ -107,6 +107,7 @@ Clicking the menu bar icon opens a popover with:
 |---------|-------------|
 | Now playing | Current wallpaper preview, title and status (playing, paused and why, loading) |
 | Pause / Mute / Customize | Toggle playback, toggle wallpaper audio (muted by default), open the wallpaper's properties |
+| Volume | The current wallpaper's volume (shown for wallpapers with sound) |
 | Recent | The last eight wallpapers; click one to apply it |
 | Browse Wallpapers… / folder button | Open the wallpaper library, or pick any wallpaper file or directory |
 | Clear Wallpaper | Remove the current wallpaper (it is then not restored at next launch) |
@@ -121,7 +122,7 @@ Click **Browse Wallpapers…** in the menu bar popover to open the library windo
 
 - **Sidebar** — All, Favorites, Recent, then each wallpaper type and tag with counts
 - **Grid** — preview thumbnails; the active wallpaper is badged; ♡ toggles a favorite; right-click for Apply / Favorite / Show in Finder
-- **Inspector** — large preview, type, Workshop link, tags, description, **Apply**, and the wallpaper's settings. Settings of the active wallpaper apply live; others are saved and used when the wallpaper is applied.
+- **Inspector** — large preview, type, Workshop link, tags, description, **Apply**, playback (volume; speed and Fill/Fit/Stretch scaling for videos) and the wallpaper's settings. Settings of the active wallpaper apply live; others are saved and used when the wallpaper is applied.
 
 Click a card to inspect it; double-click to set it as your desktop background. **Customize** in the menu bar popover opens the library on the active wallpaper.
 

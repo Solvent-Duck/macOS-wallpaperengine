@@ -206,6 +206,14 @@ class SceneRenderer: WallpaperRenderer {
         }
     }
 
+    /// User volume applied on top of each sound layer's authored gain.
+    private var volume: Float = 1
+
+    func applyPlayback(_ settings: PlaybackSettings) {
+        volume = Float(settings.volume)
+        updateSoundPlayback()
+    }
+
     /// Physical output is gated independently from the runtime's logical
     /// per-layer state. Muting or pausing never rewrites a layer command.
     private func updateSoundPlayback() {
@@ -226,7 +234,7 @@ class SceneRenderer: WallpaperRenderer {
             soundPlayer.updateScene(soundScene, assetRoots: roots(for: soundScene))
             soundSceneRevision = revision
         }
-        soundPlayer?.reconcile(latestSoundTransports, outputEnabled: enabled)
+        soundPlayer?.reconcile(latestSoundTransports, outputEnabled: enabled, masterVolume: volume)
         guard let nativeRenderer else { return }
         for (nodeID, runID, finished) in soundPlayer?.drainTerminalStatuses() ?? [] {
             nativeRenderer.updateSoundPlaybackStatus(nodeID: nodeID, runID: runID, finished: finished)

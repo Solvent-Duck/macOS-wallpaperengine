@@ -142,6 +142,41 @@ struct WebPropertyDeliveryTests {
         #expect(try await webView.evaluateJavaScript("general[general.length-1].muted") as? Bool == false)
     }
 
+    @Test func hostVolumeScalesAuthoredVolume() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("WEWebVolume-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let html = root.appendingPathComponent("index.html")
+        try """
+        <!doctype html><html><body><audio id="music"></audio><script>
+        window.events = []; window.general = [];
+        music.volume = 0.5;
+        window.wallpaperPropertyListener = {
+            applyUserProperties(properties) { events.push(properties); },
+            applyGeneralProperties(properties) { general.push(properties); }
+        };
+        </script></body></html>
+        """.write(to: html, atomically: true, encoding: .utf8)
+        let renderer = WebRenderer(fileURL: html)
+        defer { renderer.stop() }
+        let webView = try #require(renderer.view as? WKWebView)
+        renderer.applyPlayback(PlaybackSettings(volume: 0.5))
+        renderer.play()
+        try await waitForEvents(1, in: webView)
+
+        // The page still reads its own volume; the element plays at authored × host.
+        #expect(try await webView.evaluateJavaScript("music.volume") as? Double == 0.5)
+        #expect(try await webView.evaluateJavaScript("music._weOwnVolume === 0.5 && general[general.length-1].volume === 50") as? Bool == true)
+        _ = try await webView.evaluateJavaScript("music.volume = 0.8; true")
+        #expect(try await webView.evaluateJavaScript("music.volume") as? Double == 0.8)
+
+        renderer.applyPlayback(PlaybackSettings(volume: 1))
+        #expect(try await webView.evaluateJavaScript("music.volume === 0.8 && general[general.length-1].volume === 100") as? Bool == true)
+        _ = try await webView.evaluateJavaScript("window.late = new Audio(); late.volume = 0.4; true")
+        renderer.applyPlayback(PlaybackSettings(volume: 0.25))
+        #expect(try await webView.evaluateJavaScript("late.volume") as? Double == 0.4)
+    }
+
     private func waitForEvents(_ count: Int, in webView: WKWebView, page: String? = nil) async throws {
         let deadline = ContinuousClock.now + .seconds(15)
         while ContinuousClock.now < deadline {
