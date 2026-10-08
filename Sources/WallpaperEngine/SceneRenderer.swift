@@ -540,7 +540,7 @@ class SceneRenderer: WallpaperRenderer {
                 return .double(doubleValue)
             }
             return .string(trimmed)
-        case .text, .textinput, .file, .scenetexture:
+        case .text, .textinput, .file, .scenetexture, .group, .usershortcut:
             return .string(trimmed)
         }
     }

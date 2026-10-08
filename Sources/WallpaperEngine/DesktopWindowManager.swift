@@ -489,18 +489,34 @@ class DesktopWindowManager {
 
     // MARK: - Property Persistence
 
-    private func userDefaultsKey(for project: WallpaperProject) -> String {
+    /// Settings follow the wallpaper folder name (the workshop ID for Steam
+    /// wallpapers), so they survive moving or copying the library.
+    static func propertyStorageKey(for project: WallpaperProject) -> String {
+        "WallpaperProperties.\(project.directoryURL?.lastPathComponent ?? project.title)"
+    }
+
+    /// Keys from before the folder-name scheme used the absolute path.
+    private static func legacyPropertyStorageKey(for project: WallpaperProject) -> String {
         "WallpaperProperties.\(project.directoryURL?.path ?? project.title)"
     }
 
+    static func loadPropertyValues(for project: WallpaperProject, defaults: UserDefaults = .standard) -> [String: String] {
+        let key = propertyStorageKey(for: project)
+        if let values = defaults.dictionary(forKey: key) as? [String: String] { return values }
+        let legacyKey = legacyPropertyStorageKey(for: project)
+        guard legacyKey != key, let legacy = defaults.dictionary(forKey: legacyKey) as? [String: String] else { return [:] }
+        defaults.set(legacy, forKey: key)
+        defaults.removeObject(forKey: legacyKey)
+        return legacy
+    }
+
     private func loadPropertyValues(for project: WallpaperProject) -> [String: String] {
-        let key = userDefaultsKey(for: project)
-        return UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        Self.loadPropertyValues(for: project)
     }
 
     private func savePropertyValues() {
         guard let project = currentProject else { return }
-        UserDefaults.standard.set(propertyValues, forKey: userDefaultsKey(for: project))
+        UserDefaults.standard.set(propertyValues, forKey: Self.propertyStorageKey(for: project))
     }
 
     /// Slider and colour drags change values every frame; persist once they settle.

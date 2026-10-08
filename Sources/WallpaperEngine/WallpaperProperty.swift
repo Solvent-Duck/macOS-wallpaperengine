@@ -11,6 +11,25 @@ enum WEPropertyType: String {
     case textinput
     case file
     case scenetexture
+    case group         // section header; following properties belong to it
+    case usershortcut  // Windows app-launcher shortcut; not applicable on macOS
+
+    /// Parse an authored type name. Wallpapers in the wild use `Text`, `label`
+    /// and empty types for informational labels.
+    init?(authored raw: String?) {
+        switch raw?.lowercased() {
+        case "label", "", nil: self = .text
+        case let name?: self.init(rawValue: name)
+        }
+    }
+
+    /// Whether the property carries a user value (as opposed to layout or a label).
+    var holdsValue: Bool {
+        switch self {
+        case .text, .group, .usershortcut: return false
+        default: return true
+        }
+    }
 }
 
 /// A selectable option for a `combo` property.
@@ -31,7 +50,7 @@ struct WallpaperProperty: Identifiable {
     var id: String { key }
 
     let key: String
-    let type: WEPropertyType
+    var type: WEPropertyType
     /// Human-readable display label.
     let text: String
     /// Sort order from project.json; properties with no order get 999.
@@ -49,6 +68,8 @@ struct WallpaperProperty: Identifiable {
     let options: [WEPropertyOption]?
     /// Numeric combo values must remain numbers when sent to web wallpapers.
     var usesNumericComboValues: Bool = false
+    /// Show the control only while this holds; nil means always visible.
+    var condition: PropertyCondition? = nil
 }
 
 // MARK: - Parsing
@@ -77,14 +98,12 @@ extension WallpaperProperty {
         var result: [WallpaperProperty] = []
         for (key, raw) in block {
             guard let dict = raw as? [String: Any],
-                  let typeStr = dict["type"] as? String,
-                  let propType = WEPropertyType(rawValue: typeStr) else { continue }
+                  let propType = WEPropertyType(authored: dict["type"] as? String) else { continue }
+            // An untyped entry is only meaningful as a label.
+            if dict["type"] == nil && dict["text"] == nil { continue }
 
-            let rawLabel = dict["text"] as? String ?? key
-            // WE uses unresolved i18n keys like "ui_browse_properties_scheme_color" for some
-            // built-in properties. Convert them to a readable form.
-            let text = rawLabel.hasPrefix("ui_") ? humanize(key) : rawLabel
-            let order = dict["order"] as? Int ?? 999
+            let text = displayLabel(dict["text"] as? String ?? key, key: key)
+            let order = (dict["order"] ?? dict["index"]) as? Int ?? 999
 
             var options: [WEPropertyOption]?
             if let optArr = dict["options"] as? [[String: Any]] {
@@ -106,7 +125,8 @@ extension WallpaperProperty {
                 step:      dict["step"]      as? Double,
                 precision: dict["precision"] as? Int,
                 options:   options,
-                usesNumericComboValues: propType == .combo && dict["value"] is NSNumber && !isBool(dict["value"] as Any)
+                usesNumericComboValues: propType == .combo && dict["value"] is NSNumber && !isBool(dict["value"] as Any),
+                condition: (dict["condition"] as? String).flatMap(PropertyCondition.init)
             ))
         }
 
@@ -114,6 +134,14 @@ extension WallpaperProperty {
     }
 
     // MARK: Private helpers
+
+    /// WE uses unresolved i18n keys like "ui_browse_properties_scheme_color" for
+    /// some built-in properties. Convert them to a readable form.
+    static func displayLabel(_ raw: String, key: String) -> String {
+        let prefix = "ui_browse_properties_"
+        if raw.hasPrefix(prefix) { return humanize(String(raw.dropFirst(prefix.count))) }
+        return raw.hasPrefix("ui_") ? humanize(key) : raw
+    }
 
     /// Convert a snake_case property key to a Title Case label.
     private static func humanize(_ key: String) -> String {
@@ -139,7 +167,7 @@ extension WallpaperProperty {
             return (raw as? String).map { normalizeColorString($0) } ?? "1 1 1"
         case .combo:
             return scalarString(raw) ?? ""
-        case .textinput, .file, .scenetexture, .text:
+        case .textinput, .file, .scenetexture, .text, .group, .usershortcut:
             return raw as? String ?? ""
         }
     }
@@ -177,7 +205,7 @@ extension WallpaperProperty {
         self.init(
             key: nativeProperty.key,
             type: WEPropertyType(nativeProperty: nativeProperty.type),
-            text: nativeProperty.label.isEmpty ? nativeProperty.key : nativeProperty.label,
+            text: nativeProperty.label.isEmpty ? nativeProperty.key : Self.displayLabel(nativeProperty.label, key: nativeProperty.key),
             order: nativeProperty.order,
             defaultValue: Self.canonicalString(from: nativeProperty.defaultValue, type: nativeProperty.type),
             min: nativeProperty.minimum,
@@ -271,6 +299,50 @@ private extension WEPropertyType {
     }
 }
 
+// MARK: - Layout Merge
+
+extension WallpaperProperty {
+    /// Scene properties come from the native scene parser, which keeps value
+    /// semantics but drops layout: `condition`, `group` headers and untyped
+    /// labels. Re-attach those from the app's own parse of the same project.json.
+    static func mergingLayout(native: [WallpaperProperty], authored: [WallpaperProperty]) -> [WallpaperProperty] {
+        let authoredByKey = Dictionary(authored.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        var merged = native.map { property -> WallpaperProperty in
+            guard let layout = authoredByKey[property.key] else { return property }
+            var property = property
+            property.condition = layout.condition
+            if !layout.type.holdsValue { property.type = layout.type }
+            return property
+        }
+        let nativeKeys = Set(native.map(\.key))
+        merged += authored.filter { !nativeKeys.contains($0.key) && !$0.type.holdsValue }
+        return merged.sorted { ($0.order, $0.text, $0.key) < ($1.order, $1.text, $1.key) }
+    }
+
+    /// The value a condition expression sees for this property.
+    func conditionValue(_ stored: String?) -> PropertyCondition.Value {
+        let value = stored ?? defaultValue
+        switch type {
+        case .bool:
+            return .bool(["1", "true", "yes", "on"].contains(value.lowercased()))
+        case .slider:
+            return .number(Double(value) ?? 0)
+        case .combo where usesNumericComboValues:
+            return .number(Double(value) ?? 0)
+        default:
+            return .string(value)
+        }
+    }
+
+    /// Whether this control is visible given every property's current value.
+    static func isVisible(_ property: WallpaperProperty, among properties: [String: WallpaperProperty], values: [String: String]) -> Bool {
+        guard let condition = property.condition else { return true }
+        return condition.isSatisfied { key in
+            properties[key].map { $0.conditionValue(values[key]) } ?? .undefined
+        }
+    }
+}
+
 // MARK: - Color Utilities
 
 extension WallpaperProperty {
@@ -343,7 +415,7 @@ extension WallpaperProperty {
     /// Serialize the complete event as JSON so keys and values cannot alter its JavaScript.
     static func javaScriptPayload(properties: [WallpaperProperty], values: [String: String]) -> String {
         var payload: [String: [String: Any]] = [:]
-        for property in properties where property.type != .text {
+        for property in properties where property.type.holdsValue {
             let value = values[property.key] ?? property.defaultValue
             var entry: [String: Any] = ["value": property.javaScriptValue(from: value)]
             if property.type == .combo,

@@ -102,7 +102,8 @@ struct WallpaperProject: Codable {
 
     var resolvedProperties: [WallpaperProperty] {
         if type == .preset { return properties }
-        return sceneDescription?.userProperties.map(WallpaperProperty.init(nativeProperty:)) ?? properties
+        guard let native = sceneDescription?.userProperties else { return properties }
+        return WallpaperProperty.mergingLayout(native: native.map(WallpaperProperty.init(nativeProperty:)), authored: properties)
     }
 
     var sceneResolution: CGSize? {

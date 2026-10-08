@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Property Store
 
 /// Observable model that holds the live property values for the properties panel.
 final class PropertyStore: ObservableObject {
     let properties: [WallpaperProperty]
+    let propertiesByKey: [String: WallpaperProperty]
+    let sections: [PropertySection]
     @Published var values: [String: String]
     let onChange: (String, String) -> Void
     let onReset: (() -> Bool)?
@@ -15,22 +18,38 @@ final class PropertyStore: ObservableObject {
          onChange: @escaping (String, String) -> Void,
          onReset: (() -> Bool)? = nil) {
         self.properties = properties
+        self.propertiesByKey = Dictionary(properties.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        self.sections = PropertyLayout.sections(properties)
         self.onChange   = onChange
         self.onReset = onReset
         // Seed values: use provided entry or fall back to property default
         var merged = [String: String]()
-        for p in properties { merged[p.key] = values[p.key] ?? p.defaultValue }
+        for p in properties where p.type.holdsValue { merged[p.key] = values[p.key] ?? p.defaultValue }
         self.values = merged
     }
+
+    var hasEditableProperties: Bool { properties.contains { $0.type.holdsValue } }
 
     func set(_ value: String, for key: String) {
         values[key] = value
         onChange(key, value)
     }
 
+    func isVisible(_ property: WallpaperProperty) -> Bool {
+        WallpaperProperty.isVisible(property, among: propertiesByKey, values: values)
+    }
+
+    func isModified(_ property: WallpaperProperty) -> Bool {
+        property.type.holdsValue && (values[property.key] ?? property.defaultValue) != property.defaultValue
+    }
+
+    func reset(_ property: WallpaperProperty) {
+        set(property.defaultValue, for: property.key)
+    }
+
     func resetToDefaults() {
         if let onReset, !onReset() { return }
-        for p in properties {
+        for p in properties where p.type.holdsValue {
             values[p.key] = p.defaultValue
             if onReset == nil { onChange(p.key, p.defaultValue) }
         }
@@ -41,30 +60,27 @@ final class PropertyStore: ObservableObject {
 
 struct PropertiesView: View {
     @ObservedObject var store: PropertyStore
-
-    var editableProperties: [WallpaperProperty] {
-        store.properties.filter { $0.type != .text }
-    }
+    @State private var collapsedSections: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
             if store.properties.isEmpty {
                 emptyState
             } else {
-                propertyList
+                propertyForm
             }
 
             Divider()
 
             HStack {
                 Spacer()
-                Button("Reset to Defaults") { store.resetToDefaults() }
-                    .disabled(editableProperties.isEmpty && store.onReset == nil)
+                Button("Reset All") { store.resetToDefaults() }
+                    .disabled(!store.hasEditableProperties && store.onReset == nil)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .frame(minWidth: 360, idealWidth: 400, minHeight: 160)
+        .frame(minWidth: 380, idealWidth: 440, minHeight: 200)
     }
 
     private var emptyState: some View {
@@ -76,18 +92,49 @@ struct PropertiesView: View {
         }
     }
 
-    private var propertyList: some View {
-        List(store.properties) { prop in
-            if prop.type == .text {
-                Text(prop.text)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .listRowSeparator(.hidden)
-            } else {
-                PropertyRow(prop: prop, store: store)
+    private var propertyForm: some View {
+        Form {
+            ForEach(store.sections) { section in
+                let visible = section.items.filter(store.isVisible)
+                if !visible.isEmpty {
+                    if let header = section.header, store.isVisible(header) {
+                        Section(isExpanded: expansion(for: section.id)) {
+                            rows(visible)
+                        } header: {
+                            Text(header.text)
+                        }
+                    } else {
+                        Section { rows(visible) }
+                    }
+                }
             }
         }
-        .listStyle(.inset)
+        .formStyle(.grouped)
+        .animation(.default, value: store.values)
+    }
+
+    @ViewBuilder
+    private func rows(_ properties: [WallpaperProperty]) -> some View {
+        ForEach(properties) { prop in
+            if prop.type.holdsValue {
+                PropertyRow(prop: prop, store: store)
+            } else if let label = PropertyLayout.labelText(prop.text) {
+                Text(label)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func expansion(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedSections.contains(id) },
+            set: { expanded in
+                if expanded { collapsedSections.remove(id) } else { collapsedSections.insert(id) }
+            }
+        )
     }
 }
 
@@ -98,29 +145,42 @@ private struct PropertyRow: View {
     @ObservedObject var store: PropertyStore
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(prop.text)
-                .frame(minWidth: 80, alignment: .leading)
+        LabeledContent {
+            HStack(spacing: 6) {
+                control
+                    .frame(maxWidth: 240)
+                Button {
+                    store.reset(prop)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.borderless)
+                .help("Reset to default")
+                .opacity(store.isModified(prop) ? 1 : 0)
+                .disabled(!store.isModified(prop))
+                .accessibilityHidden(!store.isModified(prop))
+            }
+        } label: {
+            Text(PropertyLayout.labelText(prop.text).map { String($0.characters) } ?? prop.key)
                 .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 4)
-            control
-                .frame(maxWidth: 220)
         }
-        .padding(.vertical, 2)
+        .contextMenu {
+            Button("Reset to Default") { store.reset(prop) }
+                .disabled(!store.isModified(prop))
+        }
     }
 
     @ViewBuilder
     private var control: some View {
         switch prop.type {
-        case .slider:      SliderControl(prop: prop, store: store)
-        case .bool:        BoolControl(prop: prop, store: store)
-        case .color:       ColorControl(prop: prop, store: store)
-        case .combo:       ComboControl(prop: prop, store: store)
-        case .textinput,
-             .file,
-             .scenetexture: TextControl(prop: prop, store: store)
-        case .text:        EmptyView()
+        case .slider:       SliderControl(prop: prop, store: store)
+        case .bool:         BoolControl(prop: prop, store: store)
+        case .color:        ColorControl(prop: prop, store: store)
+        case .combo:        ComboControl(prop: prop, store: store)
+        case .textinput:    TextControl(prop: prop, store: store)
+        case .file,
+             .scenetexture: FileControl(prop: prop, store: store)
+        case .text, .group, .usershortcut: EmptyView()
         }
     }
 }
@@ -245,6 +305,46 @@ private struct TextControl: View {
     }
 }
 
+private struct FileControl: View {
+    let prop: WallpaperProperty
+    @ObservedObject var store: PropertyStore
+
+    private var path: String { store.values[prop.key] ?? prop.defaultValue }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(path.isEmpty ? "None" : (path as NSString).lastPathComponent)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(path.isEmpty ? .secondary : .primary)
+                .help(path)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            Button("Choose…", action: choose)
+            if !path.isEmpty {
+                Button {
+                    store.set("", for: prop.key)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Clear")
+            }
+        }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if prop.type == .scenetexture { panel.allowedContentTypes = [.image] }
+        if !path.isEmpty { panel.directoryURL = URL(fileURLWithPath: path).deletingLastPathComponent() }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.set(url.path, for: prop.key)
+    }
+}
+
 // MARK: - Window Controller
 
 /// Manages the floating properties panel. Owned by AppDelegate.
@@ -273,7 +373,7 @@ final class PropertiesWindowController: NSObject, NSWindowDelegate {
         }
 
         let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
             styleMask:   [.titled, .closable, .resizable, .utilityWindow],
             backing:     .buffered,
             defer:       false
