@@ -15,7 +15,7 @@ import NativeSceneRuntime
 class DesktopWindowManager {
     private var windows: [DesktopWindow] = []
     private var renderers: [WallpaperRenderer] = []
-    private var currentProject: WallpaperProject?
+    private(set) var currentProject: WallpaperProject?
     private var sceneScriptStorage: SceneScriptStorage?
 
     private var primaryRenderer: WallpaperRenderer? { renderers.first }

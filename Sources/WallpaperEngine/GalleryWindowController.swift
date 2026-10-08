@@ -8,29 +8,6 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var viewModel: GalleryViewModel?
 
-    private static let directoryDefaultsKey = "wallpaperDirectory"
-
-    /// The folders scanned when the user hasn't chosen one: the user guide's
-    /// copy-in folder first (so copies win over duplicates), then Steam's workshop.
-    static var defaultWallpaperDirectories: [URL] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return [
-            home.appendingPathComponent("Wallpaper Projects", isDirectory: true),
-            home.appendingPathComponent("Library/Application Support/Steam/steamapps/workshop/content/431960", isDirectory: true),
-        ]
-    }
-
-    /// The root directories to scan for wallpaper projects.
-    var wallpaperDirectories: [URL] {
-        if let saved = UserDefaults.standard.string(forKey: Self.directoryDefaultsKey) {
-            return [URL(fileURLWithPath: saved, isDirectory: true)]
-        }
-        return Self.defaultWallpaperDirectories.filter { url in
-            var isDirectory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
-        }
-    }
-
     func showGallery(onSelect: @escaping @MainActor (URL) async -> Void) {
         // If already open, bring to front
         if let existing = window, existing.isVisible {
@@ -63,23 +40,15 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         // Scan for wallpapers
-        vm.scan(directories: wallpaperDirectories)
+        vm.scan(directories: LibraryFolders.directories)
     }
 
     func rescan() {
-        viewModel?.scan(directories: wallpaperDirectories)
+        viewModel?.scan(directories: LibraryFolders.directories)
     }
 
     private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Folder"
-        panel.message = "Choose the folder that contains your wallpaper folders"
-        panel.directoryURL = wallpaperDirectories.first
-        guard let window, panel.runModal() == .OK, let url = panel.url else { return }
-        UserDefaults.standard.set(url.path, forKey: Self.directoryDefaultsKey)
+        guard let window, LibraryFolders.chooseCustomFolder() else { return }
         window.makeKeyAndOrderFront(nil)
         rescan()
     }
@@ -91,5 +60,53 @@ class GalleryWindowController: NSObject, NSWindowDelegate {
         viewModel = nil
         // Revert to menu bar-only accessory app unless another window is open
         AppActivation.windowDidClose()
+    }
+}
+
+/// Where the gallery looks for wallpaper folders.
+@MainActor
+enum LibraryFolders {
+    private static let defaultsKey = "wallpaperDirectory"
+
+    /// The folders scanned when the user hasn't chosen one: the user guide's
+    /// copy-in folder first (so copies win over duplicates), then Steam's workshop.
+    static var defaultDirectories: [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            home.appendingPathComponent("Wallpaper Projects", isDirectory: true),
+            home.appendingPathComponent("Library/Application Support/Steam/steamapps/workshop/content/431960", isDirectory: true),
+        ]
+    }
+
+    /// The user's chosen folder, if they picked one instead of the defaults.
+    static var customDirectory: URL? {
+        UserDefaults.standard.string(forKey: defaultsKey).map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    /// The root directories to scan for wallpaper projects.
+    static var directories: [URL] {
+        if let customDirectory { return [customDirectory] }
+        return defaultDirectories.filter { url in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+    }
+
+    static func useDefaults() {
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+    }
+
+    /// Ask for a folder; returns whether the user chose one.
+    static func chooseCustomFolder() -> Bool {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the folder that contains your wallpaper folders"
+        panel.directoryURL = directories.first
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        UserDefaults.standard.set(url.path, forKey: defaultsKey)
+        return true
     }
 }

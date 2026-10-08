@@ -97,23 +97,27 @@ rm -rf build .build
 
 The app runs as a menu bar accessory (no Dock icon) — look for the photo icon in the menu bar.
 
-**Quit behavior:** quit handling is routed through the status-item menu. The app tears down renderers and explicitly finalizes glslang before exiting.
+**Quit behavior:** quit handling is routed through the menu bar popover's power button. The app tears down renderers and explicitly finalizes glslang before exiting.
 
 ### Menu Bar
 
-| Item | Shortcut | Description |
-|------|----------|-------------|
-| Browse Wallpapers… | Cmd+B | Open the gallery window to pick from installed wallpapers |
-| Select Wallpaper… | Cmd+O | Open a file picker to load any wallpaper file or directory |
-| Pause / Resume | Cmd+P | Toggle wallpaper playback |
-| Mute / Unmute Audio | Cmd+M | Toggle wallpaper audio (muted by default) |
-| Clear Wallpaper | | Remove the current wallpaper |
-| Copy Diagnostics | Cmd+D | Copy performance stats and lifecycle events to clipboard |
-| Quit | — | Exit the application from the menu bar |
+Clicking the menu bar icon opens a popover with:
+
+| Control | Description |
+|---------|-------------|
+| Now playing | Current wallpaper preview, title and status (playing, paused and why, loading) |
+| Pause / Mute / Customize | Toggle playback, toggle wallpaper audio (muted by default), open the wallpaper's properties |
+| Recent | The last eight wallpapers; click one to apply it |
+| Browse Wallpapers… / folder button | Open the gallery, or pick any wallpaper file or directory |
+| Clear Wallpaper | Remove the current wallpaper (it is then not restored at next launch) |
+| Settings (gear) | Startup, library folder, audio response, now-playing source, diagnostics |
+| Quit (power) | Exit the application |
+
+The last wallpaper is restored when the app starts (turn this off in Settings). Settings can also add a login item, which starts the executable you launched from.
 
 ### Gallery
 
-Click **Browse Wallpapers…** in the menu bar to open the gallery window. It scans `~/Wallpaper Projects/` for installed wallpaper directories containing a `project.json` file.
+Click **Browse Wallpapers…** in the menu bar popover to open the gallery window. It scans `~/Wallpaper Projects/` and the Steam Workshop folder for installed wallpaper directories containing a `project.json` file; choose a different folder in Settings or the gallery toolbar.
 
 The gallery displays:
 - Preview thumbnails from each wallpaper's `preview` image

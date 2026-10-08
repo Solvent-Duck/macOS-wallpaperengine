@@ -263,7 +263,8 @@ Once the app is running:
 3. The gallery should open
 4. Click any wallpaper to apply it
 
-The gallery scans your `~/Wallpaper Projects/` folder automatically.
+The gallery scans your `~/Wallpaper Projects/` folder and Steam's Workshop folder automatically.
+To use a different folder, click **Choose Folder…** in the gallery toolbar or in Settings.
 
 You can also:
 - Search by wallpaper name
@@ -281,15 +282,17 @@ Many wallpapers expose settings — colours, speeds, toggles, and other options.
 To access them:
 1. Load a wallpaper
 2. Click the **menu bar icon**
-3. Click **Wallpaper Properties…**
+3. Click **Customize**
 
-A floating panel will open with controls specific to that wallpaper.
+A floating panel will open with controls specific to that wallpaper, grouped into sections.
+Some controls only appear once you turn on the option they belong to.
 Changes take effect immediately.
 Settings are saved per wallpaper — each wallpaper remembers its own values.
 
-To go back to the original settings, click **Reset to Defaults** at the bottom of the panel.
+To undo one change, click the ↺ arrow next to it (or right-click it and choose **Reset to Default**).
+To go back to all the original settings, click **Reset All** at the bottom of the panel.
 
-Not all wallpapers have properties. If the menu item is greyed out, that wallpaper has none.
+Not all wallpapers have properties; those show "No configurable properties".
 
 ---
 
@@ -299,7 +302,7 @@ You are not limited to the gallery.
 
 From the menu bar icon, you can choose:
 
-### **Select Wallpaper…**
+### The folder button (next to **Browse Wallpapers…**)
 Use this if you want to open:
 - A wallpaper folder
 - A `project.json` file
@@ -320,18 +323,26 @@ That builds (if needed) and starts the app with that wallpaper already loaded.
 
 ## Part 10 — Everyday controls
 
-From the menu bar icon, you can use:
+Click the menu bar icon to see what is playing and to use:
 
-- **Browse Wallpapers…** — open the wallpaper gallery
-- **Select Wallpaper…** — manually choose a wallpaper file or folder
-- **Wallpaper Properties…** — adjust settings for the current wallpaper
 - **Pause / Resume** — stop or continue playback; the wallpaper freezes in place when paused
-- **Mute / Unmute Audio** — turn wallpaper sound off or on
+- **Mute / Unmute** — turn wallpaper sound off or on
+- **Customize** — adjust settings for the current wallpaper
+- **Recent** — click a thumbnail to switch back to a wallpaper you used recently
+- **Browse Wallpapers…** — open the wallpaper gallery
+- The **folder** button — manually choose a wallpaper file or folder
 - **Clear Wallpaper** — remove the current animated wallpaper
-- **Copy Diagnostics** — copy technical info (frame timings, FPS, memory) for troubleshooting
-- **Quit WallpaperEngine** — close the app
+- The **gear** — open Settings
+- The **power** button — quit the app
 
-The app also pauses automatically when your desktop is fully covered by other windows, and resumes when it is visible again.
+The app also pauses automatically when your desktop is fully covered by other windows, and resumes when it is visible again. The popover shows why it is paused.
+
+### Settings
+
+- **General** — restore the last wallpaper when the app starts (on by default), open the app at login, and choose the wallpaper library folder.
+  Open at login starts the app from the place you ran it last; if you move the project folder, turn it off and on again.
+- **Audio & Media** — audio response and now-playing sources (see below)
+- **Advanced** — **Copy to Clipboard** copies technical info (frame timings, FPS, memory) for troubleshooting
 
 ---
 
@@ -347,7 +358,7 @@ All monitors show the same wallpaper at the same time.
 
 Some scene and web wallpapers respond to audio — they pulse, move, or change colour based on what is playing on your Mac.
 
-Choose a source in the menu bar's **Audio Response** menu:
+Choose a source in **Settings → Audio & Media → Audio Response**:
 
 - **System Audio** (default) responds to sound playing on your Mac. Allow the macOS
   audio recording prompt when it appears. No loopback driver is needed.

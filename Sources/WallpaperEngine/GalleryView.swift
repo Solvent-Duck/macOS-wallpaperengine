@@ -309,7 +309,7 @@ private struct WallpaperCard: View {
 
 /// Decodes previews off the main thread at card size, so scrolling a large
 /// library doesn't decode full-resolution images (or whole GIFs) in `body`.
-private struct PreviewThumbnail: View {
+struct PreviewThumbnail: View {
     let url: URL?
     @State private var image: NSImage?
     @State private var failed = false
