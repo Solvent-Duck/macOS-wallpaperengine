@@ -639,7 +639,10 @@ private class SceneMetalView: MTKView {
             print("[SceneMetalView] Blit pipeline set up")
         }
 
-        let drawable = captureSize == nil ? currentDrawable : nil
+        // MTKView only replaces `currentDrawable` at the end of `draw()`, which
+        // this manually driven view never calls. Take a fresh drawable from the
+        // layer each frame; re-presenting one drawable leaves the screen frozen.
+        let drawable = captureSize == nil ? (layer as? CAMetalLayer)?.nextDrawable() : nil
         guard captureSize != nil || drawable != nil,
               let cmdBuf = commandQueue.makeCommandBuffer(),
               let renderTarget = makeNativeRenderTarget(
@@ -657,8 +660,8 @@ private class SceneMetalView: MTKView {
         lastEngineTexture = renderTarget
 
         let blitStart = CACurrentMediaTime()
-        if drawable != nil, let rpd = currentRenderPassDescriptor,
-           let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd),
+        if let drawable,
+           let enc = cmdBuf.makeRenderCommandEncoder(descriptor: blitPassDescriptor(for: drawable)),
            let pso = blitPipelineState,
            let vb = quadVertexBuffer,
            let ss = samplerState {
@@ -680,6 +683,15 @@ private class SceneMetalView: MTKView {
         let blitMs = (CACurrentMediaTime() - blitStart) * 1000.0
         frameCount += 1
         return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: blitMs, sceneTime: packet.timing.elapsedTime)
+    }
+
+    private func blitPassDescriptor(for drawable: CAMetalDrawable) -> MTLRenderPassDescriptor {
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = drawable.texture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        descriptor.colorAttachments[0].clearColor = clearColor
+        return descriptor
     }
 
     func capturePNG(to outputURL: URL) throws -> ScreenshotReport {
