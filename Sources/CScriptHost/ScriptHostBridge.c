@@ -20,6 +20,10 @@ struct WEScriptHost {
     JSValue value_dispatcher;
     JSValue user_properties;
     JSValue engine_snapshot;
+    // Input is identical for every value script in a frame. Initialized
+    // modules only read it (lazy member copies), so one parse can be shared.
+    char* input_cache_json;
+    JSValue input_cache_value;
     pthread_t stack_thread;
     void* storage_opaque;
     WEScriptStorageHandler storage_handler;
@@ -267,6 +271,7 @@ WEScriptHost* we_script_host_create(void) {
     host->value_dispatcher = JS_UNDEFINED;
     host->user_properties = JS_UNDEFINED;
     host->engine_snapshot = JS_UNDEFINED;
+    host->input_cache_value = JS_UNDEFINED;
     host->runtime = JS_NewRuntime();
     if (host->runtime != NULL) configure_stack_thread(host);
     if (host->runtime != NULL) host->context = JS_NewContext(host->runtime);
@@ -295,8 +300,10 @@ void we_script_host_destroy(WEScriptHost* host) {
         JS_FreeValue(host->context, host->value_dispatcher);
         JS_FreeValue(host->context, host->user_properties);
         JS_FreeValue(host->context, host->engine_snapshot);
+        JS_FreeValue(host->context, host->input_cache_value);
         JS_FreeContext(host->context);
     }
+    free(host->input_cache_json);
     if (host->runtime != NULL) JS_FreeRuntime(host->runtime);
     free(host);
 }
@@ -1088,7 +1095,8 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
             JS_FreeValue(ctx, engine);
             engine = JS_EXCEPTION;
         } else if (supplied == 0) {
-            JSValue snapshot = copy_json_value(ctx, host->user_properties, 0, true);
+            // Running modules copy object members before keeping them.
+            JSValue snapshot = copy_json_value(ctx, host->user_properties, 0, !initialized);
             if (JS_IsException(snapshot) || JS_DefinePropertyValue(ctx, engine, property, snapshot, JS_PROP_C_W_E) < 0) {
                 JS_FreeValue(ctx, engine);
                 engine = JS_EXCEPTION;
@@ -1103,7 +1111,23 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
         return evaluation;
     }
 
-    JSValue input = parse_json(ctx, input_json != NULL ? input_json : "{}", "<input>");
+    const char* input_text = input_json != NULL ? input_json : "{}";
+    JSValue input;
+    if (initialized && host->input_cache_json != NULL && strcmp(host->input_cache_json, input_text) == 0) {
+        input = JS_DupValue(ctx, host->input_cache_value);
+    } else {
+        // A new module keeps its input object, so it never shares the cache.
+        input = parse_json(ctx, input_text, "<input>");
+        if (initialized && !JS_IsException(input)) {
+            char* text = duplicate_c_string(input_text);
+            if (text != NULL) {
+                free(host->input_cache_json);
+                JS_FreeValue(ctx, host->input_cache_value);
+                host->input_cache_json = text;
+                host->input_cache_value = JS_DupValue(ctx, input);
+            }
+        }
+    }
     if (JS_IsException(input)) {
         JS_FreeValue(ctx, props);
         JS_FreeValue(ctx, current_value);
@@ -1114,8 +1138,11 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
 
     JSValue global_object = JS_GetGlobalObject(ctx);
 
-    char* eval_script = build_eval_script(initialized ? NULL : script_source);
-    if (eval_script == NULL) {
+    // Running modules reuse the compiled dispatcher; skip rebuilding the
+    // wrapper source (all preludes) unless something will compile it.
+    const bool needs_script = !initialized || JS_IsUndefined(host->value_dispatcher);
+    char* eval_script = needs_script ? build_eval_script(initialized ? NULL : script_source) : NULL;
+    if (needs_script && eval_script == NULL) {
         JS_FreeValue(ctx, props);
         JS_FreeValue(ctx, current_value);
         JS_FreeValue(ctx, engine);
