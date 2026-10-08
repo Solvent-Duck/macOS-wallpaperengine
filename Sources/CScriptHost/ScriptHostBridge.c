@@ -859,8 +859,10 @@ WEScriptHostEvaluation we_script_host_set_engine_snapshot_json(WEScriptHost* hos
 
 // Only called on the private JSON snapshot, never on authored objects/getters.
 // Immutable strings/scalars can share storage; objects must remain independent.
-static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned depth) {
-    if (!JS_IsObject(value)) return JS_DupValue(ctx, value);
+// A shallow copy (deep == false) shares nested objects and is only safe when
+// the caller copies them again before authored code can see them.
+static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned depth, bool deep) {
+    if (!JS_IsObject(value) || (!deep && depth > 0)) return JS_DupValue(ctx, value);
     if (depth > 256) return JS_ThrowRangeError(ctx, "User properties exceed the snapshot nesting limit");
     JSPropertyEnum* properties = NULL;
     uint32_t count = 0;
@@ -869,7 +871,7 @@ static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned dept
     JSValue result = JS_IsArray(value) ? JS_NewArray(ctx) : JS_NewObject(ctx);
     for (uint32_t i = 0; i < count && !JS_IsException(result); ++i) {
         JSValue member = JS_GetProperty(ctx, value, properties[i].atom);
-        JSValue copy = JS_IsException(member) ? JS_EXCEPTION : copy_json_value(ctx, member, depth + 1);
+        JSValue copy = JS_IsException(member) ? JS_EXCEPTION : copy_json_value(ctx, member, depth + 1, deep);
         JS_FreeValue(ctx, member);
         if (JS_IsException(copy) || JS_DefinePropertyValue(ctx, result, properties[i].atom, copy,
                 JS_PROP_C_W_E) < 0) {
@@ -884,10 +886,13 @@ static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned dept
 
 // Both inputs are private parsed JSON, never authored objects or accessors.
 // Consumes overrides and returns a fresh engine object (or an exception).
-static JSValue merge_engine_snapshot(WEScriptHost* host, JSValue overrides) {
+// `deep` is required when the result may become a module's own engine object.
+// Otherwise the dispatcher copies every member, so sharing nested snapshot
+// objects avoids a redundant deep copy on each of the frame's evaluations.
+static JSValue merge_engine_snapshot(WEScriptHost* host, JSValue overrides, bool deep) {
     if (JS_IsUndefined(host->engine_snapshot) || !JS_IsObject(overrides)) return overrides;
     JSContext* ctx = host->context;
-    JSValue result = copy_json_value(ctx, host->engine_snapshot, 0);
+    JSValue result = copy_json_value(ctx, host->engine_snapshot, 0, deep);
     JSPropertyEnum* properties = NULL;
     uint32_t count = 0;
     if (!JS_IsException(result) && JS_GetOwnPropertyNames(ctx, &properties, &count, overrides,
@@ -1003,8 +1008,18 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
         return evaluation;
     }
 
+    JSValue engine_global = JS_GetGlobalObject(ctx);
+    JSValue instances = JS_GetPropertyStr(ctx, engine_global, "__weValueInstances");
+    JSValue instance = JS_IsObject(instances)
+        ? JS_GetPropertyStr(ctx, instances, instance_id != NULL ? instance_id : "default") : JS_UNDEFINED;
+    const bool initialized = JS_IsObject(instance);
+    JS_FreeValue(ctx, instance);
+    JS_FreeValue(ctx, instances);
+    JS_FreeValue(ctx, engine_global);
+
+    // A new module keeps this engine object, so it must own every member.
     JSValue engine = merge_engine_snapshot(host,
-        parse_json(ctx, engine_json != NULL ? engine_json : "{}", "<engine>"));
+        parse_json(ctx, engine_json != NULL ? engine_json : "{}", "<engine>"), !initialized);
     if (JS_IsObject(engine) && !JS_IsUndefined(host->user_properties)) {
         // Match a JSON member: inherited authored accessors must not intercept
         // either the missing-value check or delivery of the host snapshot.
@@ -1014,7 +1029,7 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
             JS_FreeValue(ctx, engine);
             engine = JS_EXCEPTION;
         } else if (supplied == 0) {
-            JSValue snapshot = copy_json_value(ctx, host->user_properties, 0);
+            JSValue snapshot = copy_json_value(ctx, host->user_properties, 0, true);
             if (JS_IsException(snapshot) || JS_DefinePropertyValue(ctx, engine, property, snapshot, JS_PROP_C_W_E) < 0) {
                 JS_FreeValue(ctx, engine);
                 engine = JS_EXCEPTION;
@@ -1039,12 +1054,6 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
     }
 
     JSValue global_object = JS_GetGlobalObject(ctx);
-    JSValue instances = JS_GetPropertyStr(ctx, global_object, "__weValueInstances");
-    JSValue instance = JS_IsObject(instances)
-        ? JS_GetPropertyStr(ctx, instances, instance_id != NULL ? instance_id : "default") : JS_UNDEFINED;
-    const bool initialized = JS_IsObject(instance);
-    JS_FreeValue(ctx, instance);
-    JS_FreeValue(ctx, instances);
 
     char* eval_script = build_eval_script(initialized ? NULL : script_source);
     if (eval_script == NULL) {
