@@ -7,18 +7,24 @@ import AppKit
 /// is covered by other windows ~90% of the time for most users. When fully
 /// occluded, rendering is completely paused (zero GPU/CPU draw).
 ///
-/// Two signals are combined. NSWindow's `occlusionState` (updated by the
-/// WindowServer) catches spaces, sleep and full-screen apps, but desktop-level
-/// windows keep reporting visible while ordinary windows cover them. A cheap
-/// once-a-second check of the on-screen window list catches that case.
+/// Visibility comes from the on-screen window list: a desktop window is hidden
+/// when other applications' opaque windows cover its screen's visible area.
+/// That covers maximized windows and full-screen apps (the desktop window
+/// joins every Space). NSWindow's `occlusionState` is unreliable for
+/// desktop-level windows in both directions (it can stay "occluded" after the
+/// covering window is minimized or hidden), so it only triggers a re-check, as
+/// do app activation, hiding and Space changes; a once-a-second check catches
+/// everything else. Sleep and screen lock are handled by the window manager.
 @MainActor
 class OcclusionDetector {
     private var observations: [NSKeyValueObservation] = []
     private var onVisibilityChanged: ((Bool) -> Void)?
     private var trackedWindows: [DesktopWindow] = []
-    private var hasEverBeenVisible = false
     private var coverageTimer: Timer?
     private var coveredWindows: Set<ObjectIdentifier> = []
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var lastReported: Bool?
+    private static let debugLogging = ProcessInfo.processInfo.environment["WE_DEBUG_OCCLUSION"] != nil
 
     /// Start observing occlusion state for the given desktop windows.
     ///
@@ -32,9 +38,17 @@ class OcclusionDetector {
 
         for window in windows {
             let observation = window.observe(\.occlusionState, options: [.new]) { [weak self] _, _ in
-                DispatchQueue.main.async { self?.evaluateVisibility() }
+                DispatchQueue.main.async { self?.updateWindowCoverage() }
             }
             observations.append(observation)
+        }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didHideApplicationNotification,
+                     NSWorkspace.didUnhideApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification,
+                     NSWorkspace.didTerminateApplicationNotification] {
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateWindowCoverage() }
+            })
         }
 
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -54,8 +68,10 @@ class OcclusionDetector {
         trackedWindows.removeAll()
         coverageTimer?.invalidate()
         coverageTimer = nil
+        workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        workspaceObservers.removeAll()
         coveredWindows.removeAll()
-        hasEverBeenVisible = false
+        lastReported = nil
     }
 
     private func updateWindowCoverage() {
@@ -64,38 +80,39 @@ class OcclusionDetector {
             guard let screen = window.screen else { return false }
             return Self.isCovered(Self.globalRect(screen.visibleFrame), by: covering)
         }.map(ObjectIdentifier.init))
+        if Self.debugLogging {
+            let states = trackedWindows.map { $0.occlusionState.contains(.visible) ? "visible" : "occluded" }
+            print(String(format: "[Occlusion] %.1f covering=%d covered=%d state=%@", ProcessInfo.processInfo.systemUptime,
+                         covering.count, covered.count, states.joined(separator: ",")))
+        }
         guard covered != coveredWindows else { return }
         coveredWindows = covered
         evaluateVisibility()
     }
 
     private func evaluateVisibility() {
-        // Desktop-level windows (below Finder icons) often report as
-        // permanently occluded because macOS WindowServer treats them as
-        // covered by the desktop icon layer. Until one has reported visible,
-        // ignore that flag so playback isn't blocked on launch. Window
-        // coverage is reliable and always applies, including at launch.
-        if trackedWindows.contains(where: { $0.occlusionState.contains(.visible) }) {
-            hasEverBeenVisible = true
-        }
-        let anyVisible = trackedWindows.contains { window in
-            (!hasEverBeenVisible || window.occlusionState.contains(.visible))
-                && !coveredWindows.contains(ObjectIdentifier(window))
-        }
-
+        let anyVisible = trackedWindows.contains { !coveredWindows.contains(ObjectIdentifier($0)) }
+        guard anyVisible != lastReported else { return }
+        lastReported = anyVisible
         onVisibilityChanged?(anyVisible)
     }
 
     /// Bounds (global, top-left origin) of other applications' opaque
-    /// windows at normal levels. Window bounds need no screen-recording
-    /// permission.
+    /// ordinary windows. Only the normal level counts: full-screen apps and
+    /// maximized windows live there, while the Dock (which shows a
+    /// full-screen window when windows are minimized), overlays and panels
+    /// sit above it without hiding the wallpaper. Window bounds need no
+    /// screen-recording permission.
     private static func coveringWindowRects() -> [CGRect] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+        return coveringRects(in: list, ownPID: ProcessInfo.processInfo.processIdentifier)
+    }
+
+    nonisolated static func coveringRects(in list: [[String: Any]], ownPID: Int32) -> [CGRect] {
+        let normalLevel = Int(CGWindowLevelForKey(.normalWindow))
         return list.compactMap { info in
-            guard let layer = info[kCGWindowLayer as String] as? Int, layer >= 0, layer < menuLevel,
+            guard let layer = info[kCGWindowLayer as String] as? Int, layer == normalLevel,
                   let pid = info[kCGWindowOwnerPID as String] as? Int32, pid != ownPID,
                   (info[kCGWindowAlpha as String] as? Double ?? 1) >= 0.95,
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
