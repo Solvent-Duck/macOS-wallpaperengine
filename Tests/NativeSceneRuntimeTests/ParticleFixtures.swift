@@ -10,7 +10,7 @@ func particleScene(
     nodeSettings: [String: Any] = [:], properties: [String: Any] = [:],
     childParticle: [String: Any]? = nil, childType: String = "eventspawn",
     grandchildParticle: [String: Any]? = nil, general: [String: Any] = [:],
-    additionalNodes: [[String: Any]] = []
+    additionalNodes: [[String: Any]] = [], renderer: [String: Any] = ["name": "sprite"]
 ) throws -> SceneDescription {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("WEParticles-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -19,7 +19,7 @@ func particleScene(
         "maxcount": count, "starttime": startTime, "emitter": emitters, "operator": operators, "controlpoint": controlPoints,
         "initializer": [["name": "lifetimerandom", "min": 100, "max": 100],
                         ["name": "sizerandom", "min": 2, "max": 2]] + initializers,
-        "renderer": [["name": "sprite"]]
+        "renderer": [renderer]
     ]
     if var childParticle {
         if let grandchildParticle {

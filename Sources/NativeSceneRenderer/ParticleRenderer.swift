@@ -311,7 +311,16 @@ struct ParticleRenderer {
         colors.reserveCapacity(system.instances.count * 24)
 
         switch system.rendererName {
-        case "rope", "ropetrail":
+        case "ropetrail":
+            buildRopeTrailGeometry(
+                system: system,
+                sizeScale: sizeScale,
+                opacity: opacity,
+                positions: &positions,
+                texCoords: &texCoords,
+                colors: &colors
+            )
+        case "rope":
             buildRopeGeometry(
                 system: system,
                 sizeScale: sizeScale,
@@ -421,6 +430,13 @@ struct ParticleRenderer {
         }
     }
 
+    private struct RopePoint {
+        var position: SIMD3<Float>
+        var size: Float
+        var color: SIMD4<Float>
+    }
+
+    /// `rope` chains every live particle into one ribbon.
     private func buildRopeGeometry(
         system: FrameParticleSystem,
         sizeScale: Float,
@@ -429,18 +445,75 @@ struct ParticleRenderer {
         texCoords: inout [Float],
         colors: inout [Float]
     ) {
-        let instances = system.instances
-        guard instances.count >= 2 else {
+        let points = system.instances.map {
+            RopePoint(
+                position: SIMD3<Float>($0.position.x, $0.position.y, $0.position.z),
+                size: $0.size,
+                color: SIMD4<Float>($0.color.x, $0.color.y, $0.color.z, $0.color.w)
+            )
+        }
+        appendRopeRibbon(
+            points: points,
+            subdivision: max(1, Int(system.rendererParameters?.subdivision ?? 1)),
+            sizeScale: sizeScale,
+            opacity: opacity,
+            positions: &positions,
+            texCoords: &texCoords,
+            colors: &colors
+        )
+    }
+
+    /// `ropetrail` draws one ribbon per particle through its position history,
+    /// head (v = 0) to tail.
+    private func buildRopeTrailGeometry(
+        system: FrameParticleSystem,
+        sizeScale: Float,
+        opacity: Float,
+        positions: inout [Float],
+        texCoords: inout [Float],
+        colors: inout [Float]
+    ) {
+        let subdivision = max(1, Int(system.rendererParameters?.subdivision ?? 1))
+        for instance in system.instances {
+            guard let trail = instance.trail, !trail.isEmpty else { continue }
+            let color = SIMD4<Float>(instance.color.x, instance.color.y, instance.color.z, instance.color.w)
+            var chain = [RopePoint(
+                position: SIMD3<Float>(instance.position.x, instance.position.y, instance.position.z),
+                size: instance.size,
+                color: color
+            )]
+            for past in trail.reversed() {
+                chain.append(RopePoint(position: SIMD3<Float>(past.x, past.y, past.z), size: instance.size, color: color))
+            }
+            appendRopeRibbon(
+                points: chain,
+                subdivision: subdivision,
+                sizeScale: sizeScale,
+                opacity: opacity,
+                positions: &positions,
+                texCoords: &texCoords,
+                colors: &colors
+            )
+        }
+    }
+
+    private func appendRopeRibbon(
+        points: [RopePoint],
+        subdivision: Int,
+        sizeScale: Float,
+        opacity: Float,
+        positions: inout [Float],
+        texCoords: inout [Float],
+        colors: inout [Float]
+    ) {
+        guard points.count >= 2 else {
             return
         }
 
-        let subdivision = max(1, Int(system.rendererParameters?.subdivision ?? 1))
-        let segmentCount = instances.count - 1
+        let segmentCount = points.count - 1
 
         func point(_ index: Int) -> SIMD3<Float> {
-            let clamped = min(max(index, 0), instances.count - 1)
-            let p = instances[clamped].position
-            return SIMD3<Float>(p.x, p.y, p.z)
+            points[min(max(index, 0), points.count - 1)].position
         }
 
         func catmullRom(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>, _ t: Float) -> SIMD3<Float> {
@@ -469,21 +542,19 @@ struct ParticleRenderer {
             let p1 = point(segment)
             let p2 = point(segment + 1)
             let p3 = point(segment + 2)
-            let c1 = instances[segment]
-            let c2 = instances[segment + 1]
+            let c1 = points[segment]
+            let c2 = points[segment + 1]
             for step in 0..<subdivision {
                 let t = Float(step) / Float(subdivision)
                 splinePoints.append(catmullRom(p0, p1, p2, p3, t))
                 splineSizes.append(c1.size + (c2.size - c1.size) * t)
-                let color1 = SIMD4<Float>(c1.color.x, c1.color.y, c1.color.z, c1.color.w)
-                let color2 = SIMD4<Float>(c2.color.x, c2.color.y, c2.color.z, c2.color.w)
-                splineColors.append(color1 + (color2 - color1) * t)
+                splineColors.append(c1.color + (c2.color - c1.color) * t)
             }
         }
-        let last = instances[instances.count - 1]
-        splinePoints.append(SIMD3<Float>(last.position.x, last.position.y, last.position.z))
+        let last = points[points.count - 1]
+        splinePoints.append(last.position)
         splineSizes.append(last.size)
-        splineColors.append(SIMD4<Float>(last.color.x, last.color.y, last.color.z, last.color.w))
+        splineColors.append(last.color)
 
         // Build the ribbon: two vertices per spline point, quads between points.
         var edges: [(SIMD2<Float>, SIMD2<Float>)] = []

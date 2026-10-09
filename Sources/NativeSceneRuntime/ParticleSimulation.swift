@@ -122,6 +122,9 @@ struct ParticleInstanceState {
     var oscillateSize = ParticleScalarOscillatorState()
     var oscillatePosition = ParticleVectorOscillatorState()
     var animationRandom: Float = 0
+    /// ropetrail position history, oldest first, excluding the live position.
+    var trail: [SIMD3<Float>] = []
+    var trailTimer: Float = 0
 
     var isAlive: Bool {
         lifetime > 0.0001 && age < lifetime

@@ -1019,6 +1019,22 @@ private extension SceneRuntime {
             particles: &state.particles
         )
 
+        if let renderer = particle.renderers.first, renderer.name.lowercased() == "ropetrail" {
+            // Each particle trails its own history: `segments` samples spread
+            // over `length` seconds.
+            let segments = max(Int(renderer.segments), 2)
+            let interval = Float(max(renderer.length, 0.001)) / Float(segments)
+            for index in state.particles.indices {
+                state.particles[index].trailTimer += deltaTime
+                guard state.particles[index].trailTimer >= interval else { continue }
+                state.particles[index].trailTimer = state.particles[index].trailTimer.truncatingRemainder(dividingBy: interval)
+                state.particles[index].trail.append(state.particles[index].previousPosition ?? state.particles[index].position)
+                if state.particles[index].trail.count > segments {
+                    state.particles[index].trail.removeFirst(state.particles[index].trail.count - segments)
+                }
+            }
+        }
+
         for particleState in state.particles where !particleState.isAlive {
             state.diedThisFrame.append(particleState.position)
         }
@@ -1697,7 +1713,8 @@ private extension SceneRuntime {
             color: RuntimeVector4(x: state.color.x, y: state.color.y, z: state.color.z, w: state.color.w),
             velocity: RuntimeVector3(x: state.velocity.x, y: state.velocity.y, z: state.velocity.z),
             lifetimePosition: state.lifetimePosition,
-            animationRandom: state.animationRandom
+            animationRandom: state.animationRandom,
+            trail: state.trail.isEmpty ? nil : state.trail.map { RuntimeVector3(x: $0.x, y: $0.y, z: $0.z) }
         )
     }
 

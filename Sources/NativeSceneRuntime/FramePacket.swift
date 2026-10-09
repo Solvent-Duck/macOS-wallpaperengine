@@ -822,9 +822,12 @@ public struct FrameParticleInstance: Codable, Equatable, Sendable {
     public let velocity: RuntimeVector3
     public let lifetimePosition: Float
     public let animationRandom: Float?
+    /// Past positions oldest first (ropetrail renderer only).
+    public let trail: [RuntimeVector3]?
 
     public var estimatedByteSize: Int {
         MemoryLayout<Self>.stride
+        + (trail?.reduce(0) { $0 + $1.estimatedByteSize } ?? 0)
         + position.estimatedByteSize
         + rotation.estimatedByteSize
         + color.estimatedByteSize
