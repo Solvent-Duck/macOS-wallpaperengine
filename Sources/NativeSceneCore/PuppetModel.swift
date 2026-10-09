@@ -419,6 +419,10 @@ public enum PuppetModelDecoder {
         // Position + normal + tangent/handedness occupy the first 40 bytes.
         // The four bone indices are uint32s, followed by weights and UVs.
         (80, 4, 40, 56, 72),
+        // Tag 0x0181000E: as above with one more float before the tangent
+        // (position, 4 floats, tangent/handedness), so everything after
+        // shifts by 4 bytes.
+        (84, 4, 44, 60, 76),
     ]
 
     public static func decode(_ data: Data) throws -> PuppetModel {

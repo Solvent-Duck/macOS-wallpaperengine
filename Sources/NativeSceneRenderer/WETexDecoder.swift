@@ -270,7 +270,31 @@ enum WETexDecoder {
         }
 
         let loader = MTKTextureLoader(device: device)
-        return try? loader.newTexture(cgImage: cgImage, options: [.SRGB: false])
+        if let texture = try? loader.newTexture(cgImage: cgImage, options: [.SRGB: false]) {
+            return texture
+        }
+        // The loader rejects some layouts, notably 8-bit grayscale PNGs.
+        // Redraw those into RGBA: gray fills RGB and alpha stays opaque.
+        return textureByRedrawing(cgImage, device: device)
+    }
+
+    private static func textureByRedrawing(_ image: CGImage, device: MTLDevice) -> MTLTexture? {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
+        descriptor.usage = .shaderRead
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: pixels, bytesPerRow: width * 4)
+        return texture
     }
 
     private static func textureFromRawPixels(
