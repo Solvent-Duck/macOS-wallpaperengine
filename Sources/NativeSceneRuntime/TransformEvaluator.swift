@@ -110,7 +110,7 @@ public enum TransformEvaluator {
             return origin
         }
 
-        let nodeExtent = parallaxExtent(for: node, propertyEvaluator: propertyEvaluator)
+        let nodeExtent = parallaxExtent(camera: camera, propertyEvaluator: propertyEvaluator)
         let x = depth.x * parallaxDisplacement.x * nodeExtent
         let y = depth.y * parallaxDisplacement.y * nodeExtent
         return RuntimeVector3(
@@ -180,20 +180,17 @@ public enum TransformEvaluator {
         return nil
     }
 
+    /// Parallax travel is scene-wide, so layers at the same depth shift by the
+    /// same amount regardless of their own size.
     private static func parallaxExtent(
-        for node: NodeDescriptor,
+        camera: CameraDescriptor,
         propertyEvaluator: PropertyEvaluator
     ) -> Float {
-        if let image = node.image {
-            return max(Float(image.size.first ?? 1), 1)
+        if camera.projection.width > 0 {
+            return Float(camera.projection.width)
         }
-        if let text = node.text {
-            let size = RuntimeVector2(text.size, default: RuntimeVector2(x: 1, y: 1))
-            return max(size.x, 1)
-        }
-        if let particle = node.particle {
-            let scale = propertyEvaluator.vector3Value(for: particle.scale, default: .one)
-            return max(scale.x, 1)
+        if let viewport = propertyEvaluator.context.viewportSize, viewport.x.isFinite, viewport.x > 0 {
+            return viewport.x
         }
         return 1
     }
