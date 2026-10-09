@@ -52,6 +52,10 @@ protocol WallpaperRenderer: AnyObject {
 
     /// Current external-player media snapshot, shared across displays.
     func updateMediaState(_ state: SceneMediaState)
+
+    /// Apply volume, speed and scaling. Renderers ignore what they don't support
+    /// (see `PlaybackSettings.Capabilities`).
+    func applyPlayback(_ settings: PlaybackSettings)
 }
 
 extension WallpaperRenderer {
@@ -67,4 +71,5 @@ extension WallpaperRenderer {
     func applyProperty(_ property: WallpaperProperty, value: String) {}
     func receiveAudioData(_ data: [Float]) {}
     func updateMediaState(_ state: SceneMediaState) {}
+    func applyPlayback(_ settings: PlaybackSettings) {}
 }

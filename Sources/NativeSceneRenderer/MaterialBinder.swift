@@ -12,6 +12,10 @@ struct PreparedMaterialPass {
     let vertexDescriptor: MTLVertexDescriptor
     let compiledShader: CompiledShaderPair
     let uniformSpecs: [String: UniformSpec]
+    /// Fragment declarations whose type differs from `uniformSpecs` (WE
+    /// shaders may declare e.g. a vec2 in the vertex stage and a vec4 in the
+    /// fragment stage under one name). Each stage needs its own byte size.
+    let fragmentUniformSpecs: [String: UniformSpec]
     let samplerState: MTLSamplerState
     let depthStencilState: MTLDepthStencilState
 }
@@ -62,8 +66,8 @@ final class MaterialBinder {
     private var previousMediaTexture: MTLTexture?
     private var effectTextureViews: [ObjectIdentifier: MTLTexture] = [:]
 
-    private var pipelineCache: [String: PreparedMaterialPass] = [:]
-    private var failedShaderKeys: Set<String> = []
+    private var pipelineCache: [PipelineCacheKey: PreparedMaterialPass] = [:]
+    private var failedShaderKeys: Set<PipelineCacheKey> = []
     /// Cache of zero-filled buffers keyed by (shaderKey, bufferIndex).
     private var zeroBufferCache: [String: MTLBuffer] = [:]
     /// Track which shaders we've already warned about unknown attributes (once per shader).
@@ -193,9 +197,11 @@ final class MaterialBinder {
             textures: authoredPass.textures, userTextures: authoredPass.userTextures,
             constants: authoredPass.constants, combos: combos)
         let textureSlots = Set((pass.textures + pass.userTextures).filter { !$0.path.isEmpty }.map(\.slot))
-        let key = cacheKey(material: material, pass: pass)
-            + "#color:\(attachmentFormat.rawValue)"
-            + "#textures:\(textureSlots.sorted())#depth:\(context.depthAttachmentPixelFormat.rawValue):\(pass.depthTest):\(pass.depthWrite)"
+        let key = PipelineCacheKey(sourceFile: material.sourceFile, passIndex: pass.index,
+            shaderPath: pass.shaderPath, blending: pass.blending, combos: pass.combos,
+            colorFormat: attachmentFormat.rawValue, textureSlots: textureSlots,
+            depthFormat: context.depthAttachmentPixelFormat.rawValue,
+            depthTest: pass.depthTest, depthWrite: pass.depthWrite)
         if let cached = pipelineCache[key] {
             // Only the compiled GPU state is shared. Constants and textures
             // belong to this layer and this frame, including animated values.
@@ -205,6 +211,7 @@ final class MaterialBinder {
                 vertexDescriptor: cached.vertexDescriptor,
                 compiledShader: cached.compiledShader,
                 uniformSpecs: cached.uniformSpecs,
+                fragmentUniformSpecs: cached.fragmentUniformSpecs,
                 samplerState: cached.samplerState,
                 depthStencilState: cached.depthStencilState
             )
@@ -223,7 +230,7 @@ final class MaterialBinder {
                 )
             )
 
-            let uniformSpecs = parseUniforms(
+            let (uniformSpecs, fragmentUniformSpecs) = parseUniforms(
                 vertexGLSL: compiled.vertexGLSL,
                 fragmentGLSL: compiled.fragmentGLSL
             )
@@ -255,6 +262,7 @@ final class MaterialBinder {
                 vertexDescriptor: vertexDescriptor,
                 compiledShader: compiled,
                 uniformSpecs: uniformSpecs,
+                fragmentUniformSpecs: fragmentUniformSpecs,
                 samplerState: samplerState,
                 depthStencilState: depthState
             )
@@ -404,7 +412,11 @@ final class MaterialBinder {
         }
 
         for (name, slot) in preparedPass.compiledShader.metal.fragmentUniformSlots {
-            let data = uniformData[name] ?? {
+            let fragmentData = preparedPass.fragmentUniformSpecs[name].flatMap { spec in
+                uniformOverrides[name] == nil
+                    ? encodeMaterialUniform(spec, constants: preparedPass.pass.constants, opacity: frameNode.opacity) : nil
+            }
+            let data = fragmentData ?? uniformData[name] ?? {
                 let warnKey = "\(preparedPass.pass.shaderPath):\(name)"
                 if !warnedMissingUniforms.contains(warnKey) {
                     print("[MaterialBinder] Uniform '\(name)' not bound for shader '\(preparedPass.pass.shaderPath)' — using zero fallback")
@@ -731,15 +743,7 @@ final class MaterialBinder {
             case let name where lightUniforms[name] != nil:
                 data = lightUniforms[name]
             default:
-                let lookupKey = spec.materialKey ?? spec.name
-                let sourceValue = constants[lookupKey] ?? constants[spec.name]
-                if let sourceValue {
-                    data = encode(value: sourceValue, as: spec.type, fallbackOpacity: frameNode.opacity)
-                } else if let defaultStr = spec.defaultValue {
-                    data = encodeDefault(defaultStr, as: spec.type)
-                } else {
-                    data = nil
-                }
+                data = encodeMaterialUniform(spec, constants: constants, opacity: frameNode.opacity)
             }
 
             if let data {
@@ -941,6 +945,13 @@ final class MaterialBinder {
         return result
     }
 
+    private func encodeMaterialUniform(_ spec: UniformSpec, constants: [String: FrameValue], opacity: Double?) -> Data? {
+        if let value = constants[spec.materialKey ?? spec.name] ?? constants[spec.name] {
+            return encode(value: value, as: spec.type, fallbackOpacity: opacity)
+        }
+        return spec.defaultValue.flatMap { encodeDefault($0, as: spec.type) }
+    }
+
     private func encode(value: FrameValue, as type: String, fallbackOpacity: Double?) -> Data? {
         switch type {
         case "float":
@@ -1044,7 +1055,7 @@ final class MaterialBinder {
     }
 
     private static func daytimeFraction() -> Double {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let components = Calendar.current.dateComponents([.hour, .minute], from: SceneClock.now())
         let minutes = Double((components.hour ?? 0) * 60 + (components.minute ?? 0))
         return minutes / (24.0 * 60.0)
     }
@@ -1093,11 +1104,23 @@ final class MaterialBinder {
         return z * y * x
     }
 
-    private func cacheKey(material: FrameMaterial, pass: FrameMaterialPass) -> String {
-        "\(material.sourceFile)#\(pass.index)#\(pass.shaderPath)#\(pass.blending)#\(pass.combos.sorted { $0.key < $1.key })"
+    /// Identifies compiled pipeline state. Hashed directly so per-frame lookups
+    /// don't format strings.
+    private struct PipelineCacheKey: Hashable {
+        let sourceFile: String
+        let passIndex: Int
+        let shaderPath: String
+        let blending: Int
+        let combos: [String: Int]
+        let colorFormat: UInt
+        let textureSlots: Set<Int>
+        let depthFormat: UInt
+        let depthTest: Int
+        let depthWrite: Int
     }
 
-    private func parseUniforms(vertexGLSL: String, fragmentGLSL: String) -> [String: UniformSpec] {
+    private func parseUniforms(vertexGLSL: String, fragmentGLSL: String)
+        -> (merged: [String: UniformSpec], fragmentOverrides: [String: UniformSpec]) {
         func collect(in source: String) -> [String: UniformSpec] {
             var uniforms: [String: UniformSpec] = [:]
             let lines = source.split(whereSeparator: \.isNewline).map(String.init)
@@ -1122,7 +1145,11 @@ final class MaterialBinder {
             return uniforms
         }
 
-        return collect(in: vertexGLSL).merging(collect(in: fragmentGLSL)) { current, _ in current }
+        let vertex = collect(in: vertexGLSL)
+        let fragment = collect(in: fragmentGLSL)
+        let merged = vertex.merging(fragment) { current, _ in current }
+        let overrides = fragment.filter { name, spec in merged[name].map { $0.type != spec.type } ?? false }
+        return (merged, overrides)
     }
 
     private func parseShaderAnnotation(from line: String) -> (materialKey: String?, defaultValue: String?) {

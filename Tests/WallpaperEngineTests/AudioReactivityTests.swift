@@ -98,8 +98,11 @@ struct AudioReactivityTests {
         })
         controller.start { _ in }; await settle()
         captures[0].invalidated?(); captures[0].invalidated?()
-        try await Task.sleep(for: .milliseconds(200))
+        // The restart is debounced; wait for it rather than for a fixed time,
+        // which is too short when other suites run in parallel.
+        try await waitUntil { captures.count >= 2 && controller.isRunning }
         #expect(captures.count == 2 && captures[0].stops == 1 && controller.isRunning)
+        try #require(captures.count == 2)
         captures[1].invalidated?()
         await settle()
         controller.stop()
@@ -125,6 +128,12 @@ struct AudioReactivityTests {
         return (UserDefaults(suiteName: suite)!, suite)
     }
     private func settle() async { for _ in 0..<10 { await Task.yield() } }
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
     private func tone(bin: Int) -> [Float] { (0..<2048).map { 0.5 * sin(Float($0 * bin) * 2 * .pi / 2048) } }
 }
 

@@ -3,7 +3,7 @@ import NativeSceneBridge
 import NativeSceneCore
 
 /// Represents the type of a Wallpaper Engine wallpaper.
-enum WallpaperType: String, Codable {
+enum WallpaperType: String, Codable, Sendable {
     case video
     case web
     case scene
@@ -38,7 +38,7 @@ enum WallpaperType: String, Codable {
 /// Every WE wallpaper directory contains a `project.json` with metadata
 /// about the wallpaper type, its main file, title, preview image, and
 /// user-configurable properties.
-struct WallpaperProject: Codable {
+struct WallpaperProject: Codable, Sendable {
     let title: String
     let type: WallpaperType
     let file: String
@@ -102,8 +102,12 @@ struct WallpaperProject: Codable {
 
     var resolvedProperties: [WallpaperProperty] {
         if type == .preset { return properties }
-        return sceneDescription?.userProperties.map(WallpaperProperty.init(nativeProperty:)) ?? properties
+        guard let native = sceneDescription?.userProperties else { return properties }
+        return WallpaperProperty.mergingLayout(native: native.map(WallpaperProperty.init(nativeProperty:)), authored: properties)
     }
+
+    /// Stable identity for library listings, recents and the active wallpaper.
+    var libraryPath: String? { directoryURL?.standardizedFileURL.path }
 
     var sceneResolution: CGSize? {
         guard let resolution = sceneDescription?.metadata.defaultResolution,
@@ -124,7 +128,10 @@ enum WallpaperLoader {
     /// 2. A direct `project.json` file
     /// 3. A `.pkg` archive (WE's packed format) — extracts then loads
     /// 4. A bare media file (video/HTML) — wraps it in a synthetic project
-    static func load(from url: URL) throws -> WallpaperProject {
+    ///
+    /// `metadataOnly` skips the native scene parse, which dominates load time;
+    /// listings use it and load the full project only when one is opened.
+    static func load(from url: URL, metadataOnly: Bool = false) throws -> WallpaperProject {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
             throw WallpaperError.fileNotFound(url)
@@ -134,27 +141,27 @@ enum WallpaperLoader {
         if isDirectory.boolValue {
             let projectFile = url.appendingPathComponent("project.json")
             if FileManager.default.fileExists(atPath: projectFile.path) {
-                return try loadProject(from: projectFile, directory: url)
+                return try loadProject(from: projectFile, directory: url, metadataOnly: metadataOnly)
             }
             throw WallpaperError.noProjectFile(url)
         }
 
         // Case 2: Direct project.json
         if url.lastPathComponent == "project.json" {
-            return try loadProject(from: url, directory: url.deletingLastPathComponent())
+            return try loadProject(from: url, directory: url.deletingLastPathComponent(), metadataOnly: metadataOnly)
         }
 
         // Case 3: WE .pkg archive — extract to temp dir and load
         if url.pathExtension.lowercased() == "pkg" {
             let extractedDir = try PackageParser.extract(pkgURL: url)
-            return try load(from: extractedDir)
+            return try load(from: extractedDir, metadataOnly: metadataOnly)
         }
 
         // Case 4: Bare media file — create a synthetic project
         return makeSyntheticProject(for: url)
     }
 
-    private static func loadProject(from file: URL, directory: URL, visited: Set<URL> = []) throws -> WallpaperProject {
+    private static func loadProject(from file: URL, directory: URL, visited: Set<URL> = [], metadataOnly: Bool) throws -> WallpaperProject {
         let identity = directory.resolvingSymlinksInPath().standardizedFileURL
         guard !visited.contains(identity), visited.count < 32 else {
             throw WallpaperError.cyclicPresetDependency(directory)
@@ -163,7 +170,7 @@ enum WallpaperLoader {
         let decoder = JSONDecoder()
         if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
            object["dependency"] != nil || (object["type"] as? String)?.lowercased() == "preset" {
-            return try loadPreset(object, directory: directory, visited: visited.union([identity]))
+            return try loadPreset(object, directory: directory, visited: visited.union([identity]), metadataOnly: metadataOnly)
         }
         let decodedProject: WallpaperProject
 
@@ -178,7 +185,7 @@ enum WallpaperLoader {
         project.directoryURL = directory
         project.properties = WallpaperProperty.parse(from: data)
 
-        if project.type == .scene {
+        if project.type == .scene && !metadataOnly {
             do {
                 let nativeScene = try SceneDescriptionAdapter.loadSceneDescription(
                     wallpaperPath: directory.path,
@@ -198,7 +205,7 @@ enum WallpaperLoader {
         return project
     }
 
-    private static func loadPreset(_ object: [String: Any], directory: URL, visited: Set<URL>) throws -> WallpaperProject {
+    private static func loadPreset(_ object: [String: Any], directory: URL, visited: Set<URL>, metadataOnly: Bool) throws -> WallpaperProject {
         guard let dependency = object["dependency"] as? String, !dependency.isEmpty,
               dependency.utf8.allSatisfy({ (48...57).contains($0) }),
               let values = object["preset"] as? [String: Any] else {
@@ -213,7 +220,7 @@ enum WallpaperLoader {
         guard FileManager.default.fileExists(atPath: dependencyFile.path) else {
             throw WallpaperError.missingPresetDependency(dependency)
         }
-        let base = try loadProject(from: dependencyFile, directory: dependencyDirectory, visited: visited)
+        let base = try loadProject(from: dependencyFile, directory: dependencyDirectory, visited: visited, metadataOnly: metadataOnly)
         guard base.resolvedType.isSupported else { throw WallpaperError.unsupportedType(base.resolvedType) }
         var project = WallpaperProject(
             title: object["title"] as? String ?? base.resolvedTitle, type: .preset, file: base.file,

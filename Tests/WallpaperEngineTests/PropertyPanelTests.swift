@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import WallpaperEngine
 
@@ -22,15 +23,20 @@ struct PropertyPanelTests {
         ]]])
         let property = try #require(WallpaperProperty.parse(from: data).first)
         var edits = 0
-        let controller = PropertiesWindowController()
-        defer { controller.close() }
-        controller.show(title: "Slider layout regression", properties: [property], values: [:], onChange: { _, _ in
-            edits += 1
-        })
-        // List creates its rows lazily: fittingSize alone never evaluates the
-        // slider. Display the actual panel and allow its first layout to finish.
+        let store = PropertyStore(properties: [property], values: [:], onChange: { _, _ in edits += 1 })
+        let window = NSWindow(
+            contentRect: NSRect(x: -3000, y: 0, width: 420, height: 300),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.title = "Slider layout regression"
+        window.contentViewController = NSHostingController(rootView: Form { PropertySections(store: store) }.formStyle(.grouped))
+        defer { window.close() }
+        window.orderFrontRegardless()
+        // Forms create their rows lazily: fittingSize alone never evaluates the
+        // slider. Display the actual form and allow its first layout to finish.
         try await Task.sleep(for: .milliseconds(100))
-        #expect(NSApp.windows.contains { $0.title == "Properties — Slider layout regression" && $0.isVisible })
+        #expect(window.isVisible)
         #expect(edits == 0)
         #expect(Double(property.defaultValue) == value)
         #expect(property.min == minimum)

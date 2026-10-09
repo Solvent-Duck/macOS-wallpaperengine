@@ -80,6 +80,29 @@ struct SceneSoundPlayerTests {
         #expect(files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
 
+    @Test func loopModeWithSeveralSoundsPlaysThemOneAtATimeAndWraps() {
+        var mocks: [MockPlayer] = [], loopFlags: [Bool] = []
+        func playlistSpec(_ track: Int) -> SceneSoundTrackSpec {
+            var spec = spec(1, track: track, loops: true); spec.playlist = true; return spec
+        }
+        let player = SceneSoundPlayer(trackSpecs: [playlistSpec(0), playlistSpec(1)]) { _, loops in
+            let mock = MockPlayer(); mocks.append(mock); loopFlags.append(loops); return mock
+        }
+        defer { player.dispose() }
+        player.reconcile([transport()], outputEnabled: true)
+        #expect(mocks.count == 1 && mocks[0].isPlaying)
+        player.reconcile([transport()], outputEnabled: true)
+        #expect(mocks.count == 1 && mocks[0].playCalls == 1)
+        mocks[0].isPlaying = false // first sound ends
+        player.reconcile([transport()], outputEnabled: true)
+        #expect(mocks.count == 2 && mocks[1].isPlaying && !mocks[0].isPlaying)
+        mocks[1].isPlaying = false // second ends, list wraps
+        player.reconcile([transport()], outputEnabled: true)
+        #expect(mocks[0].isPlaying && mocks[0].playCalls == 2 && !mocks[1].isPlaying)
+        #expect(loopFlags == [false, false])
+        #expect(player.drainTerminalStatuses().isEmpty)
+    }
+
     @Test func mutedAndStartSilentCommandsDoNotCreatePlayers() {
         var factories = 0
         let player = SceneSoundPlayer(trackSpecs: [spec()]) { _, _ in factories += 1; return MockPlayer() }

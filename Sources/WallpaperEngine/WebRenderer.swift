@@ -88,6 +88,36 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         webView.setAllMediaPlaybackSuspended(suspended, completionHandler: nil)
     }
 
+    // MARK: - Audio
+
+    var supportsAudio: Bool { true }
+
+    /// Web wallpapers play their own audio unmuted unless the user mutes them.
+    var isMuted = false {
+        didSet {
+            guard isMuted != oldValue, isLoaded else { return }
+            injectMuteState()
+            injectGeneralProperties()
+        }
+    }
+
+    /// User volume, 0–1, scaling each media element's own volume.
+    private var volume: Double = 1
+
+    func applyPlayback(_ settings: PlaybackSettings) {
+        guard settings.volume != volume else { return }
+        volume = settings.volume
+        guard isLoaded else { return }
+        injectMuteState()
+        injectGeneralProperties()
+    }
+
+    /// Mute every media element; elements created later are muted on play().
+    /// Web Audio graphs (AudioContext) are not covered.
+    private func injectMuteState() {
+        webView.evaluateJavaScript("if(window._weSetMuted){window._weSetVolume(\(volume));window._weSetMuted(\(isMuted));}", completionHandler: nil)
+    }
+
     func updateCursorPosition(_ position: NSPoint) {
         let js = "if(window._weCursorCallback){window._weCursorCallback(\(position.x),\(position.y));}"
         webView.evaluateJavaScript(js, completionHandler: nil)
@@ -102,6 +132,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         for p in properties { merged[p.key] = values[p.key] ?? p.defaultValue }
         propertyValues = merged
         if isLoaded {
+            injectMuteState()
             injectGeneralProperties()
             injectAllProperties()
         }
@@ -150,6 +181,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         guard let navigation, navigation === activeNavigation else { return }
         isLoaded = true
         print("[WebRenderer] Page loaded successfully")
+        injectMuteState()
         injectGeneralProperties()
         injectAllProperties()
         if !isPlaying { webView.evaluateJavaScript(Self.pauseScript, completionHandler: nil) }
@@ -198,7 +230,7 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
         (function(){
             var l=window.wallpaperPropertyListener;
             if(l&&l.applyGeneralProperties){
-                l.applyGeneralProperties({fps:30,audioprocessing:false,muted:false,volume:100});
+                l.applyGeneralProperties({fps:30,audioprocessing:false,muted:\(isMuted),volume:\(isMuted ? 0 : Int((volume * 100).rounded()))});
             }
         })();
         """
@@ -252,6 +284,57 @@ class WebRenderer: NSObject, WallpaperRenderer, WKNavigationDelegate {
                     try { window._weAudioCallbacks[i](zero); } catch(e) {}
                 }
             }, 33);
+        })();
+
+        // --- Host mute ---
+        // Remembers each element's own muted state so unmuting restores it.
+        // Played elements are tracked too, so detached `new Audio()` is covered.
+        window._weMuted = false;
+        var playedMedia = new Set();
+        window._weSetMuted = function(muted) {
+            window._weMuted = !!muted;
+            var media = new Set(document.querySelectorAll('audio,video'));
+            playedMedia.forEach(function(el) { media.add(el); });
+            media.forEach(applyHostMute);
+        };
+        function applyHostMute(el) {
+            if (window._weMuted) {
+                if (el._weOwnMuted === undefined) el._weOwnMuted = el.muted;
+                el.muted = true;
+            } else if (el._weOwnMuted !== undefined) {
+                el.muted = el._weOwnMuted;
+                el._weOwnMuted = undefined;
+            }
+        }
+        // --- Host volume ---
+        // Scales each element's own volume; reading .volume returns the authored value.
+        window._weVolume = 1;
+        var volumeProperty = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+        function applyHostVolume(el) {
+            var own = el._weOwnVolume === undefined ? volumeProperty.get.call(el) : el._weOwnVolume;
+            el._weOwnVolume = own;
+            volumeProperty.set.call(el, own * window._weVolume);
+        }
+        Object.defineProperty(HTMLMediaElement.prototype, 'volume', {
+            configurable: true,
+            enumerable: volumeProperty.enumerable,
+            get: function() { return this._weOwnVolume === undefined ? volumeProperty.get.call(this) : this._weOwnVolume; },
+            set: function(v) { this._weOwnVolume = v; volumeProperty.set.call(this, v * window._weVolume); }
+        });
+        window._weSetVolume = function(volume) {
+            window._weVolume = Math.min(1, Math.max(0, volume));
+            var media = new Set(document.querySelectorAll('audio,video'));
+            playedMedia.forEach(function(el) { media.add(el); });
+            media.forEach(applyHostVolume);
+        };
+        (function() {
+            var play = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function() {
+                playedMedia.add(this);
+                if (window._weMuted) applyHostMute(this);
+                if (window._weVolume !== 1) applyHostVolume(this);
+                return play.apply(this, arguments);
+            };
         })();
 
         // --- Cursor position ---

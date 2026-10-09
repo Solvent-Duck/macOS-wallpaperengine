@@ -4,31 +4,18 @@ import NativeSceneCompatibility
 
 /// Application delegate managing the menu bar item and desktop window lifecycle.
 ///
-/// This is a menu bar-only app (no dock icon). The status item provides
-/// wallpaper selection and app controls. Desktop windows are created
-/// automatically on launch for each connected display.
+/// This is a menu bar-only app (no dock icon). User-facing state and actions
+/// live in `AppModel`; this delegate owns process lifecycle and automation.
+/// Desktop windows are created automatically on launch for each connected display.
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private var statusItem: NSStatusItem!
     private let windowManager = DesktopWindowManager()
-    private let galleryController = GalleryWindowController()
     private let launchOptions: LaunchOptions
-    private var isPaused = false
     var initialWallpaperPath: String?
     private var automationController: AutomationController?
+    private var model: AppModel?
+    private var statusBar: StatusBarController?
 
-    // Menu items that need dynamic updates
-    private var currentWallpaperItem: NSMenuItem!
-    private var pauseResumeItem: NSMenuItem!
-    private var audioToggleItem: NSMenuItem!
-    private var audioResponseMenu: NSMenu!
-    private var audioResponseStatusItem: NSMenuItem!
-    private var clearItem: NSMenuItem!
-    private var propertiesItem: NSMenuItem!
-    private var mediaMenu: NSMenu!
-    private var mediaStatusItem: NSMenuItem!
-
-    private var propertiesController: PropertiesWindowController?
     private var didTearDownWindowManager = false
     private var didInitiateProcessTermination = false
 
@@ -39,254 +26,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if !launchOptions.isAutomation {
-            setupStatusBar()
-        }
         windowManager.setupWindows()
         print("[WallpaperEngine] Ready — \(NSScreen.screens.count) display(s) detected")
 
-        if let path = initialWallpaperPath {
-            let url = URL(fileURLWithPath: path)
-            windowManager.loadWallpaper(from: url)
-            if !launchOptions.isAutomation {
-                updateMenuState()
-            }
-        }
-
         if launchOptions.isAutomation {
-            guard initialWallpaperPath != nil else {
+            guard let path = initialWallpaperPath else {
                 print("[Automation] \(AutomationError.missingWallpaperPath.localizedDescription)")
                 terminateProcess(exitCode: 1)
                 return
             }
-
-            automationController = AutomationController(options: launchOptions) { [weak self] exitCode in
-                self?.terminateProcess(exitCode: exitCode)
+            Task {
+                // A load failure is already logged; automation then reports
+                // the missing renderer and exits non-zero.
+                try? await windowManager.loadWallpaper(from: URL(fileURLWithPath: path))
+                // The delegate lives for the whole process.
+                automationController = AutomationController(options: launchOptions) { exitCode in
+                    self.terminateProcess(exitCode: exitCode)
+                }
+                automationController?.start(with: windowManager)
             }
-            automationController?.start(with: windowManager)
+            return
         }
+
+        let model = AppModel(windowManager: windowManager)
+        model.onQuit = { [weak self] in self?.terminateProcess(exitCode: 0) }
+        self.model = model
+        statusBar = StatusBarController(model: model)
+        model.loadInitialWallpaper(path: initialWallpaperPath)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         performShutdownTeardownIfNeeded()
-    }
-
-    private func setupStatusBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-
-        if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "photo.on.rectangle",
-                accessibilityDescription: "Wallpaper Engine"
-            )
-        }
-
-        let menu = NSMenu()
-        menu.delegate = self
-
-        // Current wallpaper info (disabled label)
-        currentWallpaperItem = NSMenuItem(title: "No wallpaper loaded", action: nil, keyEquivalent: "")
-        currentWallpaperItem.isEnabled = false
-        menu.addItem(currentWallpaperItem)
-        menu.addItem(NSMenuItem.separator())
-
-        // Actions
-        let browseItem = NSMenuItem(title: "Browse Wallpapers…", action: #selector(openGallery), keyEquivalent: "b")
-        browseItem.target = self
-        menu.addItem(browseItem)
-
-        let selectItem = NSMenuItem(title: "Select Wallpaper…", action: #selector(selectWallpaper), keyEquivalent: "o")
-        selectItem.target = self
-        menu.addItem(selectItem)
-
-        propertiesItem = NSMenuItem(title: "Wallpaper Properties…", action: #selector(openProperties), keyEquivalent: "i")
-        propertiesItem.target = self
-        menu.addItem(propertiesItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        pauseResumeItem = NSMenuItem(title: "Pause", action: #selector(togglePause), keyEquivalent: "p")
-        pauseResumeItem.target = self
-        menu.addItem(pauseResumeItem)
-
-        audioToggleItem = NSMenuItem(title: "Unmute Audio", action: #selector(toggleAudio), keyEquivalent: "m")
-        audioToggleItem.target = self
-        menu.addItem(audioToggleItem)
-
-        let responseItem = NSMenuItem(title: "Audio Response", action: nil, keyEquivalent: "")
-        audioResponseMenu = NSMenu(title: "Audio Response")
-        audioResponseStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        audioResponseStatusItem.isEnabled = false
-        audioResponseMenu.addItem(audioResponseStatusItem)
-        audioResponseMenu.addItem(.separator())
-        for source in AudioResponseSource.allCases {
-            let item = NSMenuItem(title: source.title, action: #selector(selectAudioResponse(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = source.rawValue
-            audioResponseMenu.addItem(item)
-        }
-        responseItem.submenu = audioResponseMenu
-        menu.addItem(responseItem)
-
-        let mediaItem = NSMenuItem(title: "Media Integration", action: nil, keyEquivalent: "")
-        mediaMenu = NSMenu(title: "Media Integration")
-        mediaStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        mediaStatusItem.isEnabled = false
-        mediaMenu.addItem(mediaStatusItem)
-        mediaMenu.addItem(.separator())
-        for source in MediaSourceSelection.allCases {
-            let item = NSMenuItem(title: source.title, action: #selector(selectMediaSource(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = source.rawValue
-            mediaMenu.addItem(item)
-        }
-        mediaMenu.addItem(.separator())
-        for player in MediaPlayer.allCases {
-            let item = NSMenuItem(title: "Connect \(player.name)…", action: #selector(connectMediaPlayer(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = player.rawValue
-            mediaMenu.addItem(item)
-        }
-        mediaItem.submenu = mediaMenu
-        menu.addItem(mediaItem)
-
-        clearItem = NSMenuItem(title: "Clear Wallpaper", action: #selector(clearWallpaper), keyEquivalent: "")
-        clearItem.target = self
-        menu.addItem(clearItem)
-
-        let diagItem = NSMenuItem(title: "Copy Diagnostics", action: #selector(copyDiagnostics), keyEquivalent: "d")
-        diagItem.target = self
-        menu.addItem(diagItem)
-
-        menu.addItem(NSMenuItem.separator())
-        let quitItem = NSMenuItem(title: "Quit WallpaperEngine", action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-
-        statusItem.menu = menu
-        updateMenuState()
-    }
-
-    private func updateMenuState() {
-        let hasWallpaper = windowManager.currentTitle != nil
-
-        currentWallpaperItem.title = windowManager.currentTitle ?? "No wallpaper loaded"
-        pauseResumeItem.title = isPaused ? "Resume" : "Pause"
-        pauseResumeItem.isEnabled = hasWallpaper
-        audioToggleItem.title = windowManager.isMuted ? "Unmute Audio" : "Mute Audio"
-        audioToggleItem.isEnabled = hasWallpaper && windowManager.supportsAudio
-        audioResponseStatusItem.title = windowManager.audioReactivity.status
-        for item in audioResponseMenu.items where item.action == #selector(selectAudioResponse(_:)) {
-            item.state = (item.representedObject as? String) == windowManager.audioReactivity.selection.rawValue ? .on : .off
-        }
-        clearItem.isEnabled = hasWallpaper
-        propertiesItem.isEnabled = hasWallpaper
-        mediaStatusItem.title = windowManager.mediaIntegration.status
-        for item in mediaMenu.items where item.action == #selector(selectMediaSource(_:)) {
-            item.state = (item.representedObject as? String) == windowManager.mediaIntegration.selection.rawValue ? .on : .off
-        }
-    }
-
-    // MARK: - Actions
-
-    @objc private func openProperties() {
-        let props = windowManager.currentProperties
-        let vals  = windowManager.currentPropertyValues
-        guard let title = windowManager.currentTitle else { return }
-        if propertiesController == nil { propertiesController = PropertiesWindowController() }
-        propertiesController?.show(
-            title: title,
-            properties: props,
-            values: vals,
-            onChange: { [weak self] key, value in
-                self?.windowManager.applyProperty(key: key, value: value)
-            },
-            onReset: { [weak self] in
-                self?.windowManager.resetProperties() ?? false
-            }
-        )
-    }
-
-    @objc private func openGallery() {
-        galleryController.showGallery { [weak self] url in
-            self?.windowManager.loadWallpaper(from: url)
-            self?.isPaused = false
-            self?.updateMenuState()
-            self?.refreshPropertiesWindowIfNeeded()
-        }
-    }
-
-    @objc private func selectWallpaper() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select a wallpaper file or Wallpaper Engine directory"
-
-        // Bring the panel to front since we're an accessory app
-        panel.level = .floating
-
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.windowManager.loadWallpaper(from: url)
-            self?.isPaused = false
-            self?.updateMenuState()
-            self?.refreshPropertiesWindowIfNeeded()
-        }
-    }
-
-    @objc private func togglePause() {
-        isPaused.toggle()
-        if isPaused {
-            windowManager.pauseWallpaper()
-        } else {
-            windowManager.resumeWallpaper()
-        }
-        updateMenuState()
-    }
-
-    @objc private func toggleAudio() {
-        windowManager.isMuted.toggle()
-        updateMenuState()
-    }
-
-    @objc private func selectAudioResponse(_ sender: NSMenuItem) {
-        guard let value = sender.representedObject as? String, let source = AudioResponseSource(rawValue: value) else { return }
-        windowManager.audioReactivity.select(source)
-        updateMenuState()
-    }
-
-    @objc private func selectMediaSource(_ sender: NSMenuItem) {
-        guard let value = sender.representedObject as? String, let source = MediaSourceSelection(rawValue: value) else { return }
-        windowManager.mediaIntegration.select(source)
-        updateMenuState()
-    }
-
-    @objc private func connectMediaPlayer(_ sender: NSMenuItem) {
-        guard let value = sender.representedObject as? String, let player = MediaPlayer(rawValue: value) else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            await windowManager.mediaIntegration.connect(player)
-            updateMenuState()
-        }
-    }
-
-    @objc private func copyDiagnostics() {
-        let summary = PerformanceMonitor.shared.summary()
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(summary, forType: .string)
-        print("[WallpaperEngine] Diagnostics copied to clipboard")
-    }
-
-    @objc private func clearWallpaper() {
-        windowManager.clearWallpaper()
-        isPaused = false
-        updateMenuState()
-        propertiesController?.close()
-    }
-
-    @objc private func quitApp() {
-        terminateProcess(exitCode: 0)
     }
 
     private func terminateProcess(exitCode: Int32) {
@@ -294,10 +64,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         didInitiateProcessTermination = true
 
         performShutdownTeardownIfNeeded()
-        statusItem?.menu = nil
-        if let statusItem {
-            NSStatusBar.system.removeStatusItem(statusItem)
-        }
+        statusBar?.remove()
         for window in NSApplication.shared.windows {
             window.close()
         }
@@ -311,41 +78,5 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         didTearDownWindowManager = true
         windowManager.teardown()
         MetalShaderCompiler.finalizeCompiler()
-    }
-
-    /// If the properties panel is open, update it for the newly loaded wallpaper.
-    /// Keep Reset available for scene storage even without authored properties.
-    private func refreshPropertiesWindowIfNeeded() {
-        guard let controller = propertiesController else { return }
-        let props = windowManager.currentProperties
-        if let title = windowManager.currentTitle {
-            controller.show(
-                title: title,
-                properties: props,
-                values: windowManager.currentPropertyValues,
-                onChange: { [weak self] key, value in
-                    self?.windowManager.applyProperty(key: key, value: value)
-                },
-                onReset: { [weak self] in
-                    self?.windowManager.resetProperties() ?? false
-                }
-            )
-        } else {
-            controller.close()
-        }
-    }
-}
-
-// MARK: - NSMenuDelegate
-
-extension AppDelegate: NSMenuDelegate {
-    @objc func menuWillOpen(_ menu: NSMenu) {
-        updateMenuState()
-        let fps = PerformanceMonitor.shared.currentFPS
-        if fps > 0 {
-            statusItem?.button?.toolTip = String(format: "Wallpaper Engine — %.1f fps", fps)
-        } else {
-            statusItem?.button?.toolTip = "Wallpaper Engine"
-        }
     }
 }

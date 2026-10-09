@@ -128,6 +128,10 @@ public final class ScriptHost: @unchecked Sendable {
     }
     private var cachedEvaluationFrame: UInt64?
     private var cachedEvaluations: [String: (inputs: EvaluationInputs, value: FrameValue)] = [:]
+    // Script properties rarely change between frames; reuse their encoding.
+    private var cachedPropertiesJSON: [String: (properties: [String: FrameValue], json: String)] = [:]
+    private var cachedTimeOfDay: (frame: UInt64, value: Double)?
+    private var jsonEncoder = ScriptJSONEncoder()
     private var initializingScene = false
     private var loadingSceneModules = false
     private var mediaState = SceneMediaState()
@@ -674,6 +678,7 @@ public final class ScriptHost: @unchecked Sendable {
         publishedSceneValues = publishedSceneValues.filter { !belongs($0.key) }
         valueScriptUpdates = valueScriptUpdates.filter { !belongs($0.key) }
         cachedEvaluations = cachedEvaluations.filter { !belongs($0.key) }
+        cachedPropertiesJSON = cachedPropertiesJSON.filter { !belongs($0.key) }
         reportedFailures = reportedFailures.filter { failure in
             !prefixes.contains { failure.hasPrefix($0 + ".") || failure.hasPrefix($0 + ":") }
         }
@@ -908,11 +913,17 @@ public final class ScriptHost: @unchecked Sendable {
             return cached.value
         }
         cachedEvaluations[key] = nil
-        let propertiesJSON = try jsonString(for: properties.mapValues(jsValueObject(for:)))
+        let propertiesJSON: String
+        if let cached = cachedPropertiesJSON[key], cached.properties == properties {
+            propertiesJSON = cached.json
+        } else {
+            propertiesJSON = try jsonString(for: properties.mapValues(jsValueObject(for:)))
+            cachedPropertiesJSON[key] = (properties, propertiesJSON)
+        }
         let scriptBaseValue = binding.map { sceneValue(baseValue, binding: $0, toScript: true) } ?? baseValue
         let currentJSON = try jsonString(for: jsValueObject(for: scriptBaseValue))
         try updateEngineSnapshot(engine, audioSpectrum: audioSpectrum)
-        var engineObject: [String: Any] = ["timeOfDay": Self.currentTimeOfDay()]
+        var engineObject: [String: Any] = ["timeOfDay": timeOfDay(frame: engine?.frameIndex)]
         engineObject["__ownerID"] = binding?.ownerID
         engineObject["__property"] = binding?.property
         engineObject["__loadOnly"] = loadingSceneModules
@@ -989,10 +1000,20 @@ public final class ScriptHost: @unchecked Sendable {
         return value
     }
 
+    /// Time of day, sampled once per frame: evaluating dozens of scripts must
+    /// not build calendar components for each one.
+    private func timeOfDay(frame: UInt64?) -> Double {
+        guard let frame else { return Self.currentTimeOfDay() }
+        if let cachedTimeOfDay, cachedTimeOfDay.frame == frame { return cachedTimeOfDay.value }
+        let value = Self.currentTimeOfDay()
+        cachedTimeOfDay = (frame, value)
+        return value
+    }
+
     /// Fraction of the local day in [0, 1), matching WE's engine.timeOfDay.
     private static func currentTimeOfDay() -> Double {
         let calendar = Calendar.current
-        let components = calendar.dateComponents([.hour, .minute, .second], from: Date())
+        let components = calendar.dateComponents([.hour, .minute, .second], from: SceneClock.now())
         let seconds = Double((components.hour ?? 0) * 3600 + (components.minute ?? 0) * 60 + (components.second ?? 0))
         return seconds / 86_400.0
     }
@@ -1097,11 +1118,12 @@ public final class ScriptHost: @unchecked Sendable {
     }
 
     private func jsonString(for object: Any) throws -> String {
+        if let encoded = jsonEncoder.encode(object) { return encoded }
         let data = try JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .sortedKeys])
-        guard let string = String(data: data, encoding: .utf8) else {
-            throw ScriptHostError.invalidUTF8Result
-        }
-        return string
+        // JSONSerialization always emits UTF-8. Decode into a native Swift
+        // string: `String(data:encoding:)` returns a bridged NSString whose
+        // `withCString` copies one character at a time on every evaluation.
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func jsValueObject(for value: FrameValue) -> Any {

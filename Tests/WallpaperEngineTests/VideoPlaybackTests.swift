@@ -29,6 +29,32 @@ struct VideoPlaybackTests {
         #expect(probe.layer.isReadyForDisplay)
     }
 
+    @Test func playbackSettingsControlGainSpeedAndScaling() async throws {
+        let root = try VideoPlaybackProbe.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let movie = root.appendingPathComponent("colors.mov")
+        try await VideoPlaybackProbe.writeMovie(to: movie)
+        let probe = try VideoPlaybackProbe(url: movie)
+        defer { probe.close() }
+        #expect(probe.layer.videoGravity == .resizeAspectFill)
+
+        probe.renderer.applyPlayback(PlaybackSettings(volume: 0.25, rate: 1.5, scaling: .fit))
+        probe.renderer.play()
+        try await probe.waitUntilReady()
+        try await VideoPlaybackProbe.waitFor { probe.player.rate > 0 }
+        #expect(probe.player.volume == 0.25)
+        #expect(probe.player.rate == 1.5)
+        #expect(probe.layer.videoGravity == .resizeAspect)
+
+        // Changing speed while playing retimes immediately; pause/resume keeps it.
+        probe.renderer.applyPlayback(PlaybackSettings(volume: 1, rate: 0.5, scaling: .stretch))
+        #expect(probe.player.rate == 0.5)
+        probe.renderer.pause()
+        probe.renderer.play()
+        #expect(probe.player.rate == 0.5)
+        #expect(probe.layer.videoGravity == .resize)
+    }
+
     @Test func actualPlayerOutputsFramesPausesResumesAndLoops() async throws {
         let root = try VideoPlaybackProbe.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

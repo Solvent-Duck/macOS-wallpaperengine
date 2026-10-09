@@ -15,7 +15,7 @@ import NativeSceneRuntime
 class DesktopWindowManager {
     private var windows: [DesktopWindow] = []
     private var renderers: [WallpaperRenderer] = []
-    private var currentProject: WallpaperProject?
+    private(set) var currentProject: WallpaperProject?
     private var sceneScriptStorage: SceneScriptStorage?
 
     private var primaryRenderer: WallpaperRenderer? { renderers.first }
@@ -30,10 +30,13 @@ class DesktopWindowManager {
         return controller
     }()
     private var isVisible = true
-    private var isManuallyPaused = false
+    /// Whether the user paused playback (as opposed to occlusion or sleep).
+    private(set) var isManuallyPaused = false
     private var isSleeping = false
     private var isTearingDown = false
     private var lastRebuildTime: Double = 0
+    private var loadGeneration = 0
+    private var pendingPropertySave: Task<Void, Never>?
     var automationMode = false
 
     /// NSProcessInfo activity token held while the wallpaper is actively rendering.
@@ -42,6 +45,9 @@ class DesktopWindowManager {
 
     /// Live property values for the current wallpaper (defaults merged with user overrides).
     private var propertyValues: [String: String] = [:]
+
+    /// Volume, speed and scaling for the current wallpaper.
+    private(set) var playbackSettings = PlaybackSettings()
 
     /// The title of the currently loaded wallpaper, if any.
     var currentTitle: String? { currentProject?.resolvedTitle }
@@ -54,6 +60,15 @@ class DesktopWindowManager {
 
     /// Current (user-modified or default) property values.
     var currentPropertyValues: [String: String] { propertyValues }
+
+    /// Why playback is paused, or nil while it is playing (or nothing is loaded).
+    var pauseReason: String? {
+        guard currentProject != nil else { return nil }
+        if isManuallyPaused { return "Paused" }
+        if isSleeping { return "Paused while asleep" }
+        if !automationMode && !isVisible { return "Paused while covered" }
+        return nil
+    }
 
     /// Create desktop windows for all screens and start observing display changes.
     func setupWindows() {
@@ -121,23 +136,48 @@ class DesktopWindowManager {
     // MARK: - Wallpaper Loading
 
     /// Load a wallpaper from a file or directory URL.
-    func loadWallpaper(from url: URL) {
+    ///
+    /// The current wallpaper keeps playing while the project is parsed and any
+    /// WebM source is transcoded off the main thread. Throws `CancellationError`
+    /// when a newer load superseded this one while it was preparing.
+    func loadWallpaper(from url: URL) async throws {
+        loadGeneration += 1
+        let generation = loadGeneration
+        do {
+            let project = try WallpaperLoader.load(from: url)
+            guard let fileURL = project.fileURL else {
+                throw WallpaperError.fileNotFound(url)
+            }
+            var mediaURL = fileURL
+            if project.resolvedType == .video, WebMTranscoder.isWebM(fileURL) {
+                mediaURL = try await Task.detached(priority: .userInitiated) {
+                    try WebMTranscoder.transcode(webmURL: fileURL)
+                }.value
+                guard generation == loadGeneration else { throw CancellationError() }
+            }
+            try activate(project, mediaURL: mediaURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func activate(_ project: WallpaperProject, mediaURL: URL) throws {
         // Stop any existing wallpaper
+        flushPendingPropertySave()
         audioReactivity.stop()
         mediaIntegration.stop()
         let previousRenderers = renderers
         renderers = []
         previousRenderers.forEach { $0.stop() }
+        // Choosing a wallpaper is an explicit request to play it.
+        isManuallyPaused = false
 
         do {
-            let project = try WallpaperLoader.load(from: url)
             currentProject = project
             print("[WallpaperEngine] Loaded project: \"\(project.resolvedTitle)\" (type: \(project.resolvedType.rawValue))")
-
-            guard let fileURL = project.fileURL else {
-                print("[WallpaperEngine] Error: Could not resolve wallpaper file URL")
-                return
-            }
 
             sceneScriptStorage = nil
             if project.resolvedType == .scene {
@@ -145,12 +185,12 @@ class DesktopWindowManager {
                     .appendingPathComponent("WallpaperEngine/SceneScriptStorage", isDirectory: true)
                 let identity = SceneScriptStorage.wallpaperIdentity(
                     workshopID: project.type == .preset ? nil : project.sceneDescription?.metadata.workshopId,
-                    directory: project.directoryURL ?? fileURL
+                    directory: project.directoryURL ?? mediaURL
                 )
                 sceneScriptStorage = try SceneScriptStorage(directory: directory, wallpaperID: identity)
             }
             let newRenderers = try windows.map { window in
-                try createRenderer(for: project, fileURL: fileURL, screen: window.screen)
+                try createRenderer(for: project, fileURL: mediaURL, screen: window.screen)
             }
             renderers = newRenderers
             PerformanceMonitor.shared.setRenderer(type: project.resolvedType.rawValue.capitalized, status: "Playing")
@@ -160,6 +200,8 @@ class DesktopWindowManager {
             let resolvedProperties = project.resolvedProperties
             propertyValues = mergedValues(properties: resolvedProperties, saved: saved)
             newRenderers.forEach { $0.applyProperties(resolvedProperties, values: propertyValues) }
+            playbackSettings = automationMode ? PlaybackSettings() : PlaybackSettings.load(for: project)
+            newRenderers.forEach { $0.applyPlayback(playbackSettings) }
             startMediaIntegrationIfNeeded()
 
             // Set the renderer's view as content on all desktop windows
@@ -173,9 +215,10 @@ class DesktopWindowManager {
                 newRenderers.forEach { $0.play() }
             }
             updateAppNapAssertion()
-
         } catch {
-            print("[WallpaperEngine] Error loading wallpaper: \(error.localizedDescription)")
+            // The previous wallpaper is already stopped; don't report it as current.
+            clearWallpaper()
+            throw error
         }
     }
 
@@ -222,6 +265,7 @@ class DesktopWindowManager {
             return
         }
         isTearingDown = true
+        flushPendingPropertySave()
         audioReactivity.stop()
         mediaIntegration.stop()
         cursorTracker.stop()
@@ -246,6 +290,7 @@ class DesktopWindowManager {
 
     /// Stop and remove the current wallpaper.
     func clearWallpaper() {
+        flushPendingPropertySave()
         audioReactivity.stop()
         mediaIntegration.stop()
         cursorTracker.stop()
@@ -268,7 +313,15 @@ class DesktopWindowManager {
         if let prop = currentProject?.resolvedProperties.first(where: { $0.key == key }) {
             renderers.forEach { $0.applyProperty(prop, value: value) }
         }
-        savePropertyValues()
+        schedulePropertySave()
+    }
+
+    /// Apply and persist volume, speed and scaling for the current wallpaper.
+    func applyPlayback(_ settings: PlaybackSettings) {
+        guard let project = currentProject else { return }
+        playbackSettings = settings.clamped
+        renderers.forEach { $0.applyPlayback(playbackSettings) }
+        playbackSettings.save(for: project)
     }
 
     func resetProperties() -> Bool {
@@ -283,6 +336,8 @@ class DesktopWindowManager {
             if canResume { renderers.forEach { $0.play() } }
             return false
         }
+        pendingPropertySave?.cancel()
+        pendingPropertySave = nil
         propertyValues = mergedValues(properties: project.resolvedProperties, saved: [:])
         renderers.forEach { $0.applyProperties(project.resolvedProperties, values: propertyValues) }
         savePropertyValues()
@@ -311,13 +366,7 @@ class DesktopWindowManager {
     private func createRenderer(for project: WallpaperProject, fileURL: URL, screen: NSScreen?) throws -> WallpaperRenderer {
         switch project.resolvedType {
         case .video:
-            let resolvedURL: URL
-            if WebMTranscoder.isWebM(fileURL) {
-                resolvedURL = try WebMTranscoder.transcode(webmURL: fileURL)
-            } else {
-                resolvedURL = fileURL
-            }
-            return VideoRenderer(fileURL: resolvedURL)
+            return VideoRenderer(fileURL: fileURL)
         case .web:
             return WebRenderer(fileURL: fileURL, readAccessURL: project.type == .preset ? project.directoryURL?.deletingLastPathComponent() : nil)
         case .scene:
@@ -453,18 +502,52 @@ class DesktopWindowManager {
 
     // MARK: - Property Persistence
 
-    private func userDefaultsKey(for project: WallpaperProject) -> String {
+    /// Settings follow the wallpaper folder name (the workshop ID for Steam
+    /// wallpapers), so they survive moving or copying the library.
+    static func propertyStorageKey(for project: WallpaperProject) -> String {
+        "WallpaperProperties.\(project.directoryURL?.lastPathComponent ?? project.title)"
+    }
+
+    /// Keys from before the folder-name scheme used the absolute path.
+    private static func legacyPropertyStorageKey(for project: WallpaperProject) -> String {
         "WallpaperProperties.\(project.directoryURL?.path ?? project.title)"
     }
 
+    static func loadPropertyValues(for project: WallpaperProject, defaults: UserDefaults = .standard) -> [String: String] {
+        let key = propertyStorageKey(for: project)
+        if let values = defaults.dictionary(forKey: key) as? [String: String] { return values }
+        let legacyKey = legacyPropertyStorageKey(for: project)
+        guard legacyKey != key, let legacy = defaults.dictionary(forKey: legacyKey) as? [String: String] else { return [:] }
+        defaults.set(legacy, forKey: key)
+        defaults.removeObject(forKey: legacyKey)
+        return legacy
+    }
+
     private func loadPropertyValues(for project: WallpaperProject) -> [String: String] {
-        let key = userDefaultsKey(for: project)
-        return UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        Self.loadPropertyValues(for: project)
     }
 
     private func savePropertyValues() {
         guard let project = currentProject else { return }
-        UserDefaults.standard.set(propertyValues, forKey: userDefaultsKey(for: project))
+        UserDefaults.standard.set(propertyValues, forKey: Self.propertyStorageKey(for: project))
+    }
+
+    /// Slider and colour drags change values every frame; persist once they settle.
+    private func schedulePropertySave() {
+        pendingPropertySave?.cancel()
+        pendingPropertySave = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self else { return }
+            self.pendingPropertySave = nil
+            self.savePropertyValues()
+        }
+    }
+
+    private func flushPendingPropertySave() {
+        guard let pending = pendingPropertySave else { return }
+        pending.cancel()
+        pendingPropertySave = nil
+        savePropertyValues()
     }
 
     private func mergedValues(properties: [WallpaperProperty], saved: [String: String]) -> [String: String] {

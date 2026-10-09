@@ -206,6 +206,14 @@ class SceneRenderer: WallpaperRenderer {
         }
     }
 
+    /// User volume applied on top of each sound layer's authored gain.
+    private var volume: Float = 1
+
+    func applyPlayback(_ settings: PlaybackSettings) {
+        volume = Float(settings.volume)
+        updateSoundPlayback()
+    }
+
     /// Physical output is gated independently from the runtime's logical
     /// per-layer state. Muting or pausing never rewrites a layer command.
     private func updateSoundPlayback() {
@@ -226,7 +234,7 @@ class SceneRenderer: WallpaperRenderer {
             soundPlayer.updateScene(soundScene, assetRoots: roots(for: soundScene))
             soundSceneRevision = revision
         }
-        soundPlayer?.reconcile(latestSoundTransports, outputEnabled: enabled)
+        soundPlayer?.reconcile(latestSoundTransports, outputEnabled: enabled, masterVolume: volume)
         guard let nativeRenderer else { return }
         for (nodeID, runID, finished) in soundPlayer?.drainTerminalStatuses() ?? [] {
             nativeRenderer.updateSoundPlaybackStatus(nodeID: nodeID, runID: runID, finished: finished)
@@ -394,7 +402,9 @@ class SceneRenderer: WallpaperRenderer {
 
         // Display links can run faster than 30 Hz. The automation timer is
         // already capped, so small timer jitter must not discard every other frame.
-        guard automationTimer != nil || elapsed >= (1.0 / 30.0) else { return }
+        // Display ticks land a hair before 1/30 s apart, so allow a little slack;
+        // without it a 120 Hz link skips to every fifth tick (24 fps).
+        guard automationTimer != nil || elapsed >= (1.0 / 30.0) - 0.002 else { return }
 
         let delta = elapsed
         lastRenderTime = now
@@ -540,7 +550,7 @@ class SceneRenderer: WallpaperRenderer {
                 return .double(doubleValue)
             }
             return .string(trimmed)
-        case .text, .textinput, .file, .scenetexture:
+        case .text, .textinput, .file, .scenetexture, .group, .usershortcut:
             return .string(trimmed)
         }
     }
@@ -631,7 +641,10 @@ private class SceneMetalView: MTKView {
             print("[SceneMetalView] Blit pipeline set up")
         }
 
-        let drawable = captureSize == nil ? currentDrawable : nil
+        // MTKView only replaces `currentDrawable` at the end of `draw()`, which
+        // this manually driven view never calls. Take a fresh drawable from the
+        // layer each frame; re-presenting one drawable leaves the screen frozen.
+        let drawable = captureSize == nil ? (layer as? CAMetalLayer)?.nextDrawable() : nil
         guard captureSize != nil || drawable != nil,
               let cmdBuf = commandQueue.makeCommandBuffer(),
               let renderTarget = makeNativeRenderTarget(
@@ -649,8 +662,8 @@ private class SceneMetalView: MTKView {
         lastEngineTexture = renderTarget
 
         let blitStart = CACurrentMediaTime()
-        if drawable != nil, let rpd = currentRenderPassDescriptor,
-           let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd),
+        if let drawable,
+           let enc = cmdBuf.makeRenderCommandEncoder(descriptor: blitPassDescriptor(for: drawable)),
            let pso = blitPipelineState,
            let vb = quadVertexBuffer,
            let ss = samplerState {
@@ -672,6 +685,15 @@ private class SceneMetalView: MTKView {
         let blitMs = (CACurrentMediaTime() - blitStart) * 1000.0
         frameCount += 1
         return FrameTiming(gotTexture: true, engineMs: engineMs, blitMs: blitMs, sceneTime: packet.timing.elapsedTime)
+    }
+
+    private func blitPassDescriptor(for drawable: CAMetalDrawable) -> MTLRenderPassDescriptor {
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = drawable.texture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        descriptor.colorAttachments[0].clearColor = clearColor
+        return descriptor
     }
 
     func capturePNG(to outputURL: URL) throws -> ScreenshotReport {

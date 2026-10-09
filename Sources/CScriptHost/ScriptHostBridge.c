@@ -20,6 +20,10 @@ struct WEScriptHost {
     JSValue value_dispatcher;
     JSValue user_properties;
     JSValue engine_snapshot;
+    // Input is identical for every value script in a frame. Initialized
+    // modules only read it (lazy member copies), so one parse can be shared.
+    char* input_cache_json;
+    JSValue input_cache_value;
     pthread_t stack_thread;
     void* storage_opaque;
     WEScriptStorageHandler storage_handler;
@@ -235,12 +239,39 @@ static JSValue console_message(JSContext* ctx, JSValueConst this_value, int argc
     return JS_UNDEFINED;
 }
 
+// Opt-in reproducible clock for headless captures (see SceneClock.swift).
+// `Date` follows the pinned epoch plus scene runtime so time-based animation
+// still advances; `Math.random` becomes a fixed-seed mulberry32 stream.
+#define WE_PINNED_EPOCH_MS "1767268800000"
+static const char* WE_DETERMINISTIC_PRELUDE =
+    "(function() {\n"
+    "  const RealDate = Date;\n"
+    "  const now = () => " WE_PINNED_EPOCH_MS " + Math.round(1000 * (Number(globalThis.__engine?.runtime) || 0));\n"
+    "  function PinnedDate(...args) {\n"
+    "    if (new.target === undefined) return new RealDate(now()).toString();\n"
+    "    return Reflect.construct(RealDate, args.length ? args : [now()], new.target);\n"
+    "  }\n"
+    "  PinnedDate.prototype = RealDate.prototype;\n"
+    "  PinnedDate.now = now;\n"
+    "  PinnedDate.UTC = RealDate.UTC;\n"
+    "  PinnedDate.parse = RealDate.parse;\n"
+    "  globalThis.Date = PinnedDate;\n"
+    "  let seed = 0x2F6B3A1D;\n"
+    "  Math.random = function() {\n"
+    "    seed = (seed + 0x6D2B79F5) | 0;\n"
+    "    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);\n"
+    "    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;\n"
+    "    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n"
+    "  };\n"
+    "})();\n";
+
 WEScriptHost* we_script_host_create(void) {
     WEScriptHost* host = calloc(1, sizeof(WEScriptHost));
     if (host == NULL) return NULL;
     host->value_dispatcher = JS_UNDEFINED;
     host->user_properties = JS_UNDEFINED;
     host->engine_snapshot = JS_UNDEFINED;
+    host->input_cache_value = JS_UNDEFINED;
     host->runtime = JS_NewRuntime();
     if (host->runtime != NULL) configure_stack_thread(host);
     if (host->runtime != NULL) host->context = JS_NewContext(host->runtime);
@@ -254,6 +285,11 @@ WEScriptHost* we_script_host_create(void) {
     JS_SetPropertyStr(host->context, console, "error", JS_NewCFunctionMagic(host->context, console_message, "error", 0, JS_CFUNC_generic_magic, 1));
     JS_SetPropertyStr(host->context, global, "console", console);
     JS_FreeValue(host->context, global);
+    if (getenv("WE_DETERMINISTIC") != NULL) {
+        JSValue pinned = JS_Eval(host->context, WE_DETERMINISTIC_PRELUDE, strlen(WE_DETERMINISTIC_PRELUDE),
+                                 "<deterministic>", JS_EVAL_TYPE_GLOBAL);
+        JS_FreeValue(host->context, pinned);
+    }
     return host;
 }
 
@@ -264,8 +300,10 @@ void we_script_host_destroy(WEScriptHost* host) {
         JS_FreeValue(host->context, host->value_dispatcher);
         JS_FreeValue(host->context, host->user_properties);
         JS_FreeValue(host->context, host->engine_snapshot);
+        JS_FreeValue(host->context, host->input_cache_value);
         JS_FreeContext(host->context);
     }
+    free(host->input_cache_json);
     if (host->runtime != NULL) JS_FreeRuntime(host->runtime);
     free(host);
 }
@@ -623,20 +661,48 @@ static char* build_eval_script(const char* script_source) {
         // After module creation, incoming JSON/snapshot objects are fresh and
         // unexposed. Transfer properties directly, converting only object values
         // to SceneScript vectors. Preserve the first module's top-level references.
-        "  Object.keys(globalThis.__engine).forEach(function(k) {\n"
-        "    var value = globalThis.__engine[k];\n"
-        "    if (k === 'userProperties' && propertyRevision !== undefined && module.engine !== globalThis.__engine) {\n"
-        "      if (state.propertyShapeRevision !== propertyRevision) {\n"
-        "        state.propertyObjectKeys = Object.keys(value).filter(function(name) { return value[name] !== null && typeof value[name] === 'object'; });\n"
-        "        state.propertyShapeRevision = propertyRevision;\n"
+        // A module's first call owns the incoming engine/input objects. Later
+        // calls copy members lazily: each call swaps in its source and a value
+        // is copied on first read, so untouched members (audio, media, cursor
+        // events) cost nothing while every read still gets a private copy.
+        "  function lazyMembers(target, source, slot, skip) {\n"
+        "    var lazy = state[slot] || (state[slot] = {source: null, copies: null, keys: Object.create(null)});\n"
+        "    lazy.source = source; lazy.copies = Object.create(null);\n"
+        "    Object.keys(source).forEach(function(k) {\n"
+        "      if (k === skip) return;\n"
+        "      var mode = lazy.keys[k];\n"
+        "      if (mode === undefined) {\n"
+        "        try {\n"
+        "          Object.defineProperty(target, k, {enumerable: true, configurable: true,\n"
+        "            get: function() { var c = lazy.copies; if (!(k in c)) c[k] = copy(lazy.source[k]); return c[k]; },\n"
+        "            set: function(v) { lazy.copies[k] = v; }});\n"
+        "          mode = lazy.keys[k] = 'lazy';\n"
+        "        } catch (_) { mode = lazy.keys[k] = 'eager'; }\n"
         "      }\n"
-        "      state.propertyObjectKeys.forEach(function(name) { value[name] = copy(value[name]); });\n"
-        "      module.engine[k] = value;\n"
-        "    } else module.engine[k] = copy(value);\n"
-        "  });\n"
+        "      if (mode === 'eager') target[k] = copy(source[k]);\n"
+        "    });\n"
+        "  }\n"
+        "  if (module.engine === globalThis.__engine) {\n"
+        "    Object.keys(globalThis.__engine).forEach(function(k) { module.engine[k] = copy(globalThis.__engine[k]); });\n"
+        "  } else {\n"
+        "    lazyMembers(module.engine, globalThis.__engine, 'lazyEngine', 'userProperties');\n"
+        "    var value = globalThis.__engine.userProperties;\n"
+        "    if (value !== undefined) {\n"
+        "      if (propertyRevision !== undefined) {\n"
+        "        if (state.propertyShapeRevision !== propertyRevision) {\n"
+        "          state.propertyObjectKeys = Object.keys(value).filter(function(name) { return value[name] !== null && typeof value[name] === 'object'; });\n"
+        "          state.propertyShapeRevision = propertyRevision;\n"
+        "        }\n"
+        "        state.propertyObjectKeys.forEach(function(name) { value[name] = copy(value[name]); });\n"
+        "        module.engine.userProperties = value;\n"
+        "      } else module.engine.userProperties = copy(value);\n"
+        "    }\n"
+        "  }\n"
         "  module.engine.frameIndex = globalThis.__engine.frameIndex;\n"
         "  module.engine.isPaused = !!globalThis.__engine.isPaused;\n"
-        "  Object.keys(globalThis.__input).forEach(function(k) { module.input[k] = copy(globalThis.__input[k]); });\n"
+        "  if (module.input === globalThis.__input) {\n"
+        "    Object.keys(globalThis.__input).forEach(function(k) { module.input[k] = copy(globalThis.__input[k]); });\n"
+        "  } else lazyMembers(module.input, globalThis.__input, 'lazyInput');\n"
         "  Object.keys(globalThis.__scriptProps).forEach(function(k) { state.properties[k] = copy(globalThis.__scriptProps[k]); });\n"
         "  var base = JSON.stringify(globalThis.__currentValue);\n"
         "  if (base !== state.base) { state.base = base; state.value = copy(globalThis.__currentValue); }\n"
@@ -859,8 +925,10 @@ WEScriptHostEvaluation we_script_host_set_engine_snapshot_json(WEScriptHost* hos
 
 // Only called on the private JSON snapshot, never on authored objects/getters.
 // Immutable strings/scalars can share storage; objects must remain independent.
-static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned depth) {
-    if (!JS_IsObject(value)) return JS_DupValue(ctx, value);
+// A shallow copy (deep == false) shares nested objects and is only safe when
+// the caller copies them again before authored code can see them.
+static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned depth, bool deep) {
+    if (!JS_IsObject(value) || (!deep && depth > 0)) return JS_DupValue(ctx, value);
     if (depth > 256) return JS_ThrowRangeError(ctx, "User properties exceed the snapshot nesting limit");
     JSPropertyEnum* properties = NULL;
     uint32_t count = 0;
@@ -869,7 +937,7 @@ static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned dept
     JSValue result = JS_IsArray(value) ? JS_NewArray(ctx) : JS_NewObject(ctx);
     for (uint32_t i = 0; i < count && !JS_IsException(result); ++i) {
         JSValue member = JS_GetProperty(ctx, value, properties[i].atom);
-        JSValue copy = JS_IsException(member) ? JS_EXCEPTION : copy_json_value(ctx, member, depth + 1);
+        JSValue copy = JS_IsException(member) ? JS_EXCEPTION : copy_json_value(ctx, member, depth + 1, deep);
         JS_FreeValue(ctx, member);
         if (JS_IsException(copy) || JS_DefinePropertyValue(ctx, result, properties[i].atom, copy,
                 JS_PROP_C_W_E) < 0) {
@@ -884,10 +952,13 @@ static JSValue copy_json_value(JSContext* ctx, JSValueConst value, unsigned dept
 
 // Both inputs are private parsed JSON, never authored objects or accessors.
 // Consumes overrides and returns a fresh engine object (or an exception).
-static JSValue merge_engine_snapshot(WEScriptHost* host, JSValue overrides) {
+// `deep` is required when the result may become a module's own engine object.
+// Otherwise the dispatcher copies every member, so sharing nested snapshot
+// objects avoids a redundant deep copy on each of the frame's evaluations.
+static JSValue merge_engine_snapshot(WEScriptHost* host, JSValue overrides, bool deep) {
     if (JS_IsUndefined(host->engine_snapshot) || !JS_IsObject(overrides)) return overrides;
     JSContext* ctx = host->context;
-    JSValue result = copy_json_value(ctx, host->engine_snapshot, 0);
+    JSValue result = copy_json_value(ctx, host->engine_snapshot, 0, deep);
     JSPropertyEnum* properties = NULL;
     uint32_t count = 0;
     if (!JS_IsException(result) && JS_GetOwnPropertyNames(ctx, &properties, &count, overrides,
@@ -1003,8 +1074,18 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
         return evaluation;
     }
 
+    JSValue engine_global = JS_GetGlobalObject(ctx);
+    JSValue instances = JS_GetPropertyStr(ctx, engine_global, "__weValueInstances");
+    JSValue instance = JS_IsObject(instances)
+        ? JS_GetPropertyStr(ctx, instances, instance_id != NULL ? instance_id : "default") : JS_UNDEFINED;
+    const bool initialized = JS_IsObject(instance);
+    JS_FreeValue(ctx, instance);
+    JS_FreeValue(ctx, instances);
+    JS_FreeValue(ctx, engine_global);
+
+    // A new module keeps this engine object, so it must own every member.
     JSValue engine = merge_engine_snapshot(host,
-        parse_json(ctx, engine_json != NULL ? engine_json : "{}", "<engine>"));
+        parse_json(ctx, engine_json != NULL ? engine_json : "{}", "<engine>"), !initialized);
     if (JS_IsObject(engine) && !JS_IsUndefined(host->user_properties)) {
         // Match a JSON member: inherited authored accessors must not intercept
         // either the missing-value check or delivery of the host snapshot.
@@ -1014,7 +1095,8 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
             JS_FreeValue(ctx, engine);
             engine = JS_EXCEPTION;
         } else if (supplied == 0) {
-            JSValue snapshot = copy_json_value(ctx, host->user_properties, 0);
+            // Running modules copy object members before keeping them.
+            JSValue snapshot = copy_json_value(ctx, host->user_properties, 0, !initialized);
             if (JS_IsException(snapshot) || JS_DefinePropertyValue(ctx, engine, property, snapshot, JS_PROP_C_W_E) < 0) {
                 JS_FreeValue(ctx, engine);
                 engine = JS_EXCEPTION;
@@ -1029,7 +1111,23 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
         return evaluation;
     }
 
-    JSValue input = parse_json(ctx, input_json != NULL ? input_json : "{}", "<input>");
+    const char* input_text = input_json != NULL ? input_json : "{}";
+    JSValue input;
+    if (initialized && host->input_cache_json != NULL && strcmp(host->input_cache_json, input_text) == 0) {
+        input = JS_DupValue(ctx, host->input_cache_value);
+    } else {
+        // A new module keeps its input object, so it never shares the cache.
+        input = parse_json(ctx, input_text, "<input>");
+        if (initialized && !JS_IsException(input)) {
+            char* text = duplicate_c_string(input_text);
+            if (text != NULL) {
+                free(host->input_cache_json);
+                JS_FreeValue(ctx, host->input_cache_value);
+                host->input_cache_json = text;
+                host->input_cache_value = JS_DupValue(ctx, input);
+            }
+        }
+    }
     if (JS_IsException(input)) {
         JS_FreeValue(ctx, props);
         JS_FreeValue(ctx, current_value);
@@ -1039,15 +1137,12 @@ WEScriptHostEvaluation we_script_host_evaluate_json(
     }
 
     JSValue global_object = JS_GetGlobalObject(ctx);
-    JSValue instances = JS_GetPropertyStr(ctx, global_object, "__weValueInstances");
-    JSValue instance = JS_IsObject(instances)
-        ? JS_GetPropertyStr(ctx, instances, instance_id != NULL ? instance_id : "default") : JS_UNDEFINED;
-    const bool initialized = JS_IsObject(instance);
-    JS_FreeValue(ctx, instance);
-    JS_FreeValue(ctx, instances);
 
-    char* eval_script = build_eval_script(initialized ? NULL : script_source);
-    if (eval_script == NULL) {
+    // Running modules reuse the compiled dispatcher; skip rebuilding the
+    // wrapper source (all preludes) unless something will compile it.
+    const bool needs_script = !initialized || JS_IsUndefined(host->value_dispatcher);
+    char* eval_script = needs_script ? build_eval_script(initialized ? NULL : script_source) : NULL;
+    if (needs_script && eval_script == NULL) {
         JS_FreeValue(ctx, props);
         JS_FreeValue(ctx, current_value);
         JS_FreeValue(ctx, engine);

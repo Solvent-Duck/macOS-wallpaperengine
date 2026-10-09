@@ -6,9 +6,9 @@ A macOS application that plays animated [Wallpaper Engine](https://store.steampo
 
 - **Video wallpapers** — MP4, MOV, M4V with seamless looping
 - **Web wallpapers** — HTML/JS/CSS bundles with Wallpaper Engine JavaScript API polyfill
-- **Multi-monitor support** — one wallpaper window per connected display
+- **Multiple monitors: not supported yet** — the current wallpaper is mirrored to every connected display; per-display wallpapers, spanning and display-specific settings are not implemented or tested
 - **Smart power management** — automatically pauses rendering when the desktop is covered
-- **Gallery browser** — SwiftUI window for browsing installed wallpapers with preview thumbnails and tag filtering
+- **Wallpaper library** — SwiftUI window with a sidebar (favorites, recent, types, tags), a thumbnail grid and an inspector for details, Apply and per-wallpaper settings
 - **Menu bar controls** — pause/resume, mute/unmute audio, clear wallpaper, open gallery
 - **Package support** — reads Wallpaper Engine's `.pkg` archive format
 
@@ -97,31 +97,34 @@ rm -rf build .build
 
 The app runs as a menu bar accessory (no Dock icon) — look for the photo icon in the menu bar.
 
-**Quit behavior:** quit handling is routed through the status-item menu. The app tears down renderers and explicitly finalizes glslang before exiting.
+**Quit behavior:** quit handling is routed through the menu bar popover's power button. The app tears down renderers and explicitly finalizes glslang before exiting.
 
 ### Menu Bar
 
-| Item | Shortcut | Description |
-|------|----------|-------------|
-| Browse Wallpapers… | Cmd+B | Open the gallery window to pick from installed wallpapers |
-| Select Wallpaper… | Cmd+O | Open a file picker to load any wallpaper file or directory |
-| Pause / Resume | Cmd+P | Toggle wallpaper playback |
-| Mute / Unmute Audio | Cmd+M | Toggle wallpaper audio (muted by default) |
-| Clear Wallpaper | | Remove the current wallpaper |
-| Copy Diagnostics | Cmd+D | Copy performance stats and lifecycle events to clipboard |
-| Quit | — | Exit the application from the menu bar |
+Clicking the menu bar icon opens a popover with:
 
-### Gallery
+| Control | Description |
+|---------|-------------|
+| Now playing | Current wallpaper preview, title and status (playing, paused and why, loading) |
+| Pause / Mute / Customize | Toggle playback, toggle wallpaper audio (muted by default), open the wallpaper's properties |
+| Volume | The current wallpaper's volume (shown for wallpapers with sound) |
+| Recent | The last eight wallpapers; click one to apply it |
+| Browse Wallpapers… / folder button | Open the wallpaper library, or pick any wallpaper file or directory |
+| Clear Wallpaper | Remove the current wallpaper (it is then not restored at next launch) |
+| Settings (gear) | Startup, library folder, audio response, now-playing source, diagnostics |
+| Quit (power) | Exit the application |
 
-Click **Browse Wallpapers…** in the menu bar to open the gallery window. It scans `~/Wallpaper Projects/` for installed wallpaper directories containing a `project.json` file.
+The last wallpaper is restored when the app starts (turn this off in Settings). Settings can also add a login item, which starts the executable you launched from.
 
-The gallery displays:
-- Preview thumbnails from each wallpaper's `preview` image
-- Wallpaper title and type badge (Video, Web, Scene)
-- Tag-based filtering (tags from `project.json`)
-- Search by wallpaper title
+### Wallpaper Library
 
-Click any wallpaper card to set it as your desktop background.
+Click **Browse Wallpapers…** in the menu bar popover to open the library window. It scans `~/Wallpaper Projects/` and the Steam Workshop folder for installed wallpaper directories containing a `project.json` file (metadata only, so it takes well under a second); choose a different folder in Settings.
+
+- **Sidebar** — All, Favorites, Recent, then each wallpaper type and tag with counts
+- **Grid** — preview thumbnails; the active wallpaper is badged; ♡ toggles a favorite; right-click for Apply / Favorite / Show in Finder
+- **Inspector** — large preview, type, Workshop link, tags, description, **Apply**, playback (volume; speed and Fill/Fit/Stretch scaling for videos) and the wallpaper's settings. Settings of the active wallpaper apply live; others are saved and used when the wallpaper is applied.
+
+Click a card to inspect it; double-click (or press Return) to set it as your desktop background. Arrow keys move the selection. Drop a wallpaper folder or file onto the grid to apply it. With an empty library, the window explains where wallpapers come from and offers to create `~/Wallpaper Projects`. **Customize** in the menu bar popover opens the library on the active wallpaper.
 
 ### Installing Wallpapers
 
@@ -161,7 +164,7 @@ Long-term, this should support tag-driven wallpaper selection so an external age
 
 ## Architecture
 
-The app creates borderless, transparent `NSWindow` instances positioned at the desktop window level — above the system wallpaper image but below Finder's desktop icons. Each connected display gets its own window.
+The app creates borderless, transparent `NSWindow` instances positioned at the desktop window level — above the system wallpaper image but below Finder's desktop icons. Each connected display gets its own window showing the same wallpaper (multi-monitor setups are not supported yet — see Features).
 
 ```
 ┌─────────────────────────────┐
@@ -186,7 +189,8 @@ The app creates borderless, transparent `NSWindow` instances positioned at the d
 - **`CursorTracker`** — global mouse event monitor for interactive/parallax wallpapers
 - **`PerformanceMonitor`** — frame timing ring buffer and lifecycle event logger
 - **`PackageParser`** — extracts Wallpaper Engine `.pkg` archives
-- **`GalleryView`** — SwiftUI grid browser for installed wallpapers
+- **`GalleryView`** / **`LibraryInspector`** — SwiftUI wallpaper library (sidebar, grid, inspector with properties)
+- **`AppModel`** / **`MenuBarPopover`** / **`SettingsView`** — app state, menu bar popover and settings window
 
 ## License
 
