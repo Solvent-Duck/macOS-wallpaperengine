@@ -131,6 +131,7 @@ public final class ScriptHost: @unchecked Sendable {
     // Script properties rarely change between frames; reuse their encoding.
     private var cachedPropertiesJSON: [String: (properties: [String: FrameValue], json: String)] = [:]
     private var cachedTimeOfDay: (frame: UInt64, value: Double)?
+    private var jsonEncoder = ScriptJSONEncoder()
     private var initializingScene = false
     private var loadingSceneModules = false
     private var mediaState = SceneMediaState()
@@ -1117,6 +1118,7 @@ public final class ScriptHost: @unchecked Sendable {
     }
 
     private func jsonString(for object: Any) throws -> String {
+        if let encoded = jsonEncoder.encode(object) { return encoded }
         let data = try JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .sortedKeys])
         // JSONSerialization always emits UTF-8. Decode into a native Swift
         // string: `String(data:encoding:)` returns a bridged NSString whose
