@@ -34,6 +34,9 @@ struct SceneSoundTrackSpec {
     let trackID: Int
     let loops: Bool
     let source: URL?
+    /// Several sounds in `loop` mode form a playlist: one plays at a time, in
+    /// order, and the list wraps. Each member plays once per turn.
+    var playlist = false
 }
 
 @MainActor
@@ -63,6 +66,7 @@ final class SceneSoundPlayer {
     }
 
     private var tracks: [NodeID: [Track]] = [:]
+    private var playlistIndex: [NodeID: Int] = [:]
     private var latest: [NodeID: FrameSoundTransport] = [:]
     private var terminal: [(NodeID, UInt64, Bool)] = []
     private var deliveredTerminal: [NodeID: (runID: UInt64, finished: Bool)] = [:]
@@ -84,9 +88,10 @@ final class SceneSoundPlayer {
             guard let sound = node.sound else { return nil }
             let mode = (sound.playbackMode ?? "loop").lowercased()
             let loops = mode != "single" && mode != "onetime" && mode != "once"
+            let playlist = mode == "loop" && sound.sounds.count > 1
             return sound.sounds.enumerated().map { index, path in
                 SceneSoundTrackSpec(nodeID: node.id, trackID: index, loops: loops,
-                                    source: Self.resolve(path, roots: assetRoots))
+                                    source: Self.resolve(path, roots: assetRoots), playlist: playlist)
             }
         }.flatMap { $0 }
     }
@@ -103,10 +108,11 @@ final class SceneSoundPlayer {
             let old = tracks[id] ?? [], next = groups[id] ?? []
             let same = old.count == next.count && zip(old, next).allSatisfy { track, spec in
                 track.spec.trackID == spec.trackID && track.spec.loops == spec.loops && track.spec.source == spec.source
+                    && track.spec.playlist == spec.playlist
             }
             guard !same else { continue }
             for track in old { track.player?.stop(); removeTemporaryAsset(for: track) }
-            tracks[id] = nil; latest[id] = nil; deliveredTerminal[id] = nil
+            tracks[id] = nil; latest[id] = nil; deliveredTerminal[id] = nil; playlistIndex[id] = nil
             terminal.removeAll { $0.0 == id }
         }
         for (id, specs) in groups where tracks[id] == nil { tracks[id] = specs.map(Track.init) }
@@ -169,7 +175,7 @@ final class SceneSoundPlayer {
             track.player?.stop()
             removeTemporaryAsset(for: track)
         }}
-        tracks.removeAll(); latest.removeAll(); terminal.removeAll(); deliveredTerminal.removeAll(); retainedCAFBytes = 0
+        tracks.removeAll(); latest.removeAll(); terminal.removeAll(); deliveredTerminal.removeAll(); playlistIndex.removeAll(); retainedCAFBytes = 0
     }
 
     private func reconcile(_ nodeTracks: [Track], transport: FrameSoundTransport, masterVolume: Float) {
@@ -178,6 +184,7 @@ final class SceneSoundPlayer {
             track.physicalRunID = transport.runID
             track.state = .idle; track.gatePaused = false
             deliveredTerminal[transport.nodeID] = nil
+            playlistIndex[transport.nodeID] = nil
         }
 
         // Observe an end that preceded a pause command before changing the
@@ -200,6 +207,10 @@ final class SceneSoundPlayer {
         }
 
         let gain = max(0, min(1, transport.gain * masterVolume))
+        if nodeTracks.first?.spec.playlist == true {
+            reconcilePlaylist(nodeTracks, transport: transport, gain: gain)
+            return
+        }
         var viable = 0
         for track in nodeTracks where !track.unavailable {
             if track.state == .completed { viable += 1; continue }
@@ -215,6 +226,27 @@ final class SceneSoundPlayer {
 
         if viable == 0 { reportOnce(transport.nodeID, transport.runID, false); return }
         reportCompletion(nodeTracks, transport: transport)
+    }
+
+    private func reconcilePlaylist(_ nodeTracks: [Track], transport: FrameSoundTransport, gain: Float) {
+        let live = nodeTracks.indices.filter { !nodeTracks[$0].unavailable }
+        guard !live.isEmpty else { reportOnce(transport.nodeID, transport.runID, false); return }
+        var current = live.contains(playlistIndex[transport.nodeID] ?? -1) ? playlistIndex[transport.nodeID]! : live[0]
+        var track = nodeTracks[current]
+        if track.state == .playing, !track.gatePaused, let player = track.player, !player.isPlaying {
+            track.state = .idle
+            player.currentTime = 0
+            current = live[((live.firstIndex(of: current) ?? 0) + 1) % live.count]
+            track = nodeTracks[current]
+        }
+        playlistIndex[transport.nodeID] = current
+        guard let player = player(for: track) else { return }
+        player.volume = gain
+        if track.state == .idle || track.state == .paused || track.gatePaused {
+            track.gatePaused = false
+            guard player.play() else { markUnavailable(track, reason: "player rejected play request"); return }
+            track.state = .playing
+        }
     }
 
     private func reportCompletion(_ nodeTracks: [Track], transport: FrameSoundTransport) {
@@ -236,7 +268,7 @@ final class SceneSoundPlayer {
         }
         var directReason = "direct player preparation failed"
         do {
-            let direct = try playerFactory(source, track.spec.loops)
+            let direct = try playerFactory(source, track.spec.loops && !track.spec.playlist)
             if direct.prepareToPlay() { track.player = direct; return direct }
         } catch { directReason = "direct player failed: \(error.localizedDescription)" }
 
@@ -254,7 +286,7 @@ final class SceneSoundPlayer {
                 return nil
             }
             do {
-                let fallback = try playerFactory(decoded.url, track.spec.loops)
+                let fallback = try playerFactory(decoded.url, track.spec.loops && !track.spec.playlist)
                 guard fallback.prepareToPlay() else {
                     try? fileManager.removeItem(at: decoded.url)
                     markUnavailable(track, reason: "\(directReason); PCM fallback preparation failed")
