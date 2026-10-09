@@ -20,8 +20,8 @@ struct ParticleTextureAtlasTests {
         malformed[lastFrame] = 1
         #expect(ParticleTextureAtlas.decode(malformed) == nil)
         var oversized = data
-        // Declared dimensions must not overflow the inferred grid capacity.
-        oversized.replaceSubrange(26..<34, with: Data(repeating: 255, count: 8))
+        // Stored dimensions must not overflow the inferred grid capacity.
+        oversized.replaceSubrange(63..<71, with: Data(repeating: 255, count: 8))
         for frame in [oversized.count - 64, oversized.count - 32] {
             for offset in [16, 28] {
                 var one = Float(1).bitPattern.littleEndian
@@ -29,6 +29,29 @@ struct ParticleTextureAtlasTests {
             }
         }
         #expect(ParticleTextureAtlas.decode(oversized) == nil)
+    }
+
+    @Test func framesAreLaidOutAgainstTheStoredImageNotThePaddedHeader() throws {
+        // 10x5 stored image in a 16x8 header: 2 frames of 5x5, plus a 4px-aligned overshoot.
+        var data = makeAtlasTestTexture()
+        func put(_ value: UInt32, at offset: Int) {
+            var value = value.littleEndian
+            withUnsafeBytes(of: &value) { data.replaceSubrange(offset..<offset + 4, with: $0) }
+        }
+        func putFloat(_ value: Float, at offset: Int) { put(value.bitPattern, at: offset) }
+        put(16, at: 26); put(8, at: 30)
+        put(10, at: 63); put(5, at: 67)
+        let frames = data.count - 64
+        for index in 0..<2 {
+            putFloat(Float(index) * 5, at: frames + index * 32 + 8)
+            putFloat(5, at: frames + index * 32 + 16)
+            putFloat(5, at: frames + index * 32 + 28)
+        }
+        let atlas = try #require(ParticleTextureAtlas.decode(data))
+        #expect(atlas.columns == 2 && atlas.rows == 1 && atlas.frameCount == 2)
+        // One extra pixel row/column of alignment padding is tolerated.
+        put(11, at: 63); put(6, at: 67)
+        #expect(ParticleTextureAtlas.decode(data)?.columns == 2)
     }
 
     @Test func sequenceOnceAndRandomFrameKeepTheirPlaybackSemantics() throws {

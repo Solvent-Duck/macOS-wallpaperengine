@@ -30,12 +30,16 @@ struct ParticleTextureAtlas: Equatable {
         }
     }
 
+    /// Authoring tools round stored sheets up to a multiple of 4 or 16 pixels
+    /// (1603x616 for 8x3 frames of 200x205, 528x112 for 5x1 of 105), so the
+    /// grid may overshoot slightly.
+    private static let alignmentSlack: Float = 16
+
     static func decode(_ data: Data) -> Self? {
         var reader = AtlasReader(data: data)
         guard reader.tag() == "TEXV0005", reader.tag() == "TEXI0001",
-              let header = reader.words(7) else { return nil }
-        let width = Int(header[2]), height = Int(header[3])
-        guard width > 0, height > 0, let container = reader.tag(),
+              reader.words(7) != nil else { return nil }
+        guard let container = reader.tag(),
               let images = reader.word(), images > 0, images <= data.count / 4 else { return nil }
         let version: Int
         switch container {
@@ -50,13 +54,18 @@ struct ParticleTextureAtlas: Equatable {
         default: return nil
         }
         // Walk lengths instead of searching for magic inside compressed data.
-        for _ in 0..<images {
+        // The header holds the power-of-two storage size; frames are laid out
+        // against the stored image, which is usually smaller (516x516 in 1024x1024).
+        var width = 0, height = 0
+        for image in 0..<images {
             guard let mips = reader.word(), mips > 0, mips <= data.count / 12 else { return nil }
-            for _ in 0..<mips {
-                guard reader.words(version >= 2 ? 4 : 2) != nil,
+            for mip in 0..<mips {
+                guard let fields = reader.words(version >= 2 ? 4 : 2),
                       let bytes = reader.word(), reader.skip(Int(bytes)) else { return nil }
+                if image == 0, mip == 0 { width = Int(fields[0]); height = Int(fields[1]) }
             }
         }
+        guard width > 0, height > 0 else { return nil }
         guard let tag = reader.tag(), ["TEXS0002", "TEXS0003"].contains(tag),
               let count = reader.word(), count > 1, count <= reader.remaining / 32 else { return nil }
         if tag == "TEXS0003", reader.words(2) == nil { return nil }
@@ -74,12 +83,13 @@ struct ParticleTextureAtlas: Equatable {
         let rows = Int((Float(height) / frameHeight).rounded())
         let capacity = columns.multipliedReportingOverflow(by: rows)
         guard !capacity.overflow, capacity.partialValue >= count,
-              abs(Float(columns) * frameWidth - Float(width)) < 0.01,
-              abs(Float(rows) * frameHeight - Float(height)) < 0.01 else { return nil }
-        for (index, frame) in frames.enumerated() {
-            guard abs(frame[1] - Float(index % columns) * frameWidth) < 0.01,
-                  abs(frame[2] - Float(index / columns) * frameHeight) < 0.01,
-                  frame[3] == frameWidth, frame[6] == frameHeight,
+              abs(Float(columns) * frameWidth - Float(width)) <= Self.alignmentSlack,
+              abs(Float(rows) * frameHeight - Float(height)) <= Self.alignmentSlack else { return nil }
+        // The particle shader derives each cell from the frame size and index
+        // alone, so stored x/y offsets are not validated: stock sheets such as
+        // leaves6 (a 6x5 grid) carry offsets for a different column count.
+        for frame in frames {
+            guard frame[3] == frameWidth, frame[6] == frameHeight,
                   frame[4] == 0, frame[5] == 0 else { return nil }
         }
         let duration = frames.reduce(Float(0)) { $0 + $1[0] }
