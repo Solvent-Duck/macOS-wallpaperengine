@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import SteamLibrary
 import SwiftUI
 
 /// The wallpaper library: sidebar filters, a grid of wallpapers and an
@@ -16,7 +17,7 @@ struct GalleryView: View {
 
     var body: some View {
         NavigationSplitView {
-            LibrarySidebar(library: library)
+            LibrarySidebar(library: library, sync: appModel.workshopSync)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
             content
@@ -47,7 +48,7 @@ struct GalleryView: View {
                         .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
                 }
         }
-        .searchable(text: $library.searchText, prompt: "Search wallpapers")
+        .searchable(text: $library.searchText, prompt: library.filter == .browse ? "Search the Workshop" : "Search wallpapers")
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
         .toolbar {
@@ -76,12 +77,21 @@ struct GalleryView: View {
         case .all: return "All Wallpapers"
         case .favorites: return "Favorites"
         case .recent: return "Recent"
+        case .downloads: return "Downloads"
+        case .browse: return "Steam Workshop"
         case .type(let type): return type.displayName
         case .tag(let tag): return tag.capitalized
         }
     }
 
     private var subtitle: String {
+        if library.filter == .browse {
+            return library.searchText.isEmpty ? "Browse" : "Search results"
+        }
+        if library.filter == .downloads {
+            let count = appModel.workshopSync.activeDownloads.count
+            return count == 1 ? "1 item" : "\(count) items"
+        }
         if library.isScanning && library.wallpapers.isEmpty { return "Scanning…" }
         let count = library.filteredWallpapers.count
         return count == 1 ? "1 wallpaper" : "\(count) wallpapers"
@@ -92,7 +102,11 @@ struct GalleryView: View {
     @ViewBuilder
     private var content: some View {
         let wallpapers = library.filteredWallpapers
-        if library.isScanning && library.wallpapers.isEmpty {
+        if library.filter == .browse {
+            WorkshopBrowseView(sync: appModel.workshopSync, library: library, appModel: appModel)
+        } else if library.filter == .downloads {
+            WorkshopDownloadsView(sync: appModel.workshopSync)
+        } else if library.isScanning && library.wallpapers.isEmpty {
             ProgressView("Scanning wallpapers…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if library.wallpapers.isEmpty {
@@ -162,7 +176,14 @@ struct GalleryView: View {
                 gridFocused = true
             },
             onApply: { apply(wallpaper) },
-            onToggleFavorite: { library.toggleFavorite(wallpaper) }
+            onToggleFavorite: { library.toggleFavorite(wallpaper) },
+            onUnsubscribe: wallpaper.steamWorkshopID.map { id in
+                {
+                    if confirmUnsubscribe(title: wallpaper.title, isActive: path != nil && path == appModel.snapshot.directoryPath) {
+                        appModel.workshopSync.unsubscribe(id)
+                    }
+                }
+            }
         )
     }
 
@@ -210,15 +231,15 @@ struct GalleryView: View {
                         .map { ($0.path as NSString).abbreviatingWithTildeInPath }
                         .joined(separator: " and ") + ".")
                 }
-                Text("Subscribe to wallpapers in Wallpaper Engine’s Steam Workshop, then copy their folders into ~/Wallpaper Projects — or choose the folder that already holds them. You can also drop a wallpaper folder or video here to apply it.")
+                Text("Wallpapers you subscribe to in Wallpaper Engine’s Steam Workshop appear here once Steam downloads them. You can also copy wallpaper folders into ~/Wallpaper Projects, add another folder, or drop a wallpaper folder or video here to apply it.")
             }
         } actions: {
             if appModel.canCreateDefaultLibraryFolder {
                 Button("Create Wallpaper Projects Folder") { appModel.createDefaultLibraryFolder() }
                     .buttonStyle(.borderedProminent)
-                Button("Choose Folder…") { appModel.chooseLibraryFolder() }
+                Button("Add Folder…") { appModel.chooseLibraryFolder() }
             } else {
-                Button("Choose Folder…") { appModel.chooseLibraryFolder() }
+                Button("Add Folder…") { appModel.chooseLibraryFolder() }
                     .buttonStyle(.borderedProminent)
                 Button("Rescan") { appModel.rescanLibrary() }
             }
@@ -229,12 +250,31 @@ struct GalleryView: View {
 
     @ViewBuilder
     private var inspector: some View {
-        if let wallpaper = selectedWallpaper {
+        if library.filter == .browse {
+            browseInspector
+        } else if let wallpaper = selectedWallpaper {
             LibraryInspector(wallpaper: wallpaper, library: library, appModel: appModel)
                 .id(wallpaper.libraryPath)
         } else {
             ContentUnavailableView("No Selection", systemImage: "sidebar.right",
                                    description: Text("Select a wallpaper to see its details and settings. Double-click to apply it."))
+        }
+    }
+
+    /// A catalogue item already in the library gets the library inspector
+    /// (Apply, properties), so one wallpaper never has two inspectors.
+    @ViewBuilder
+    private var browseInspector: some View {
+        let sync = appModel.workshopSync
+        if let id = library.selectedWorkshopID, let local = library.wallpaper(inFolderNamed: id) {
+            LibraryInspector(wallpaper: local, library: library, appModel: appModel)
+                .id(local.libraryPath)
+        } else if let id = library.selectedWorkshopID, let item = sync.browse.items.first(where: { $0.id == id }) {
+            WorkshopItemInspector(item: item, sync: sync, library: library)
+                .id(item.id)
+        } else {
+            ContentUnavailableView("No Selection", systemImage: "sidebar.right",
+                                   description: Text("Select a Workshop item to see its details. Double-click to subscribe."))
         }
     }
 
@@ -289,6 +329,7 @@ extension WallpaperType {
 
 private struct LibrarySidebar: View {
     @ObservedObject var library: GalleryViewModel
+    let sync: WorkshopSync
     @State private var showsTags = true
 
     var body: some View {
@@ -300,6 +341,12 @@ private struct LibrarySidebar: View {
                 row("All Wallpapers", icon: "square.grid.2x2", filter: .all, count: library.wallpapers.count)
                 row("Favorites", icon: "heart", filter: .favorites, count: nil)
                 row("Recent", icon: "clock", filter: .recent, count: nil)
+            }
+            Section("Steam Workshop") {
+                row("Browse", icon: "globe", filter: .browse, count: nil)
+                if !sync.downloads.isEmpty || library.filter == .downloads {
+                    row("Downloads", icon: "arrow.down.circle", filter: .downloads, count: sync.activeDownloads.count)
+                }
             }
             if library.availableTypes.count > 1 {
                 Section("Types") {
@@ -337,6 +384,8 @@ struct WallpaperCard: View {
     let onSelect: () -> Void
     let onApply: () -> Void
     let onToggleFavorite: () -> Void
+    /// Set for Steam's own copies of Workshop items.
+    var onUnsubscribe: (() -> Void)?
 
     @State private var isHovered = false
 
@@ -389,6 +438,13 @@ struct WallpaperCard: View {
             if let url = wallpaper.directoryURL {
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            if let id = wallpaper.steamWorkshopID {
+                Button("Open Workshop Page") { WorkshopLinks.openPage(for: id) }
+                if let onUnsubscribe {
+                    Divider()
+                    Button("Unsubscribe on Steam…", action: onUnsubscribe)
+                }
             }
         }
         .accessibilityElement(children: .ignore)
@@ -475,9 +531,14 @@ struct PreviewThumbnail: View {
                 image = cached
                 return
             }
-            let cgImage = await Task.detached(priority: .utility) {
-                ThumbnailCache.decode(url)
-            }.value
+            let cgImage: CGImage?
+            if url.isFileURL {
+                cgImage = await Task.detached(priority: .utility) { ThumbnailCache.decode(url) }.value
+            } else {
+                // Workshop previews for items not downloaded yet.
+                let data = try? await URLSession.shared.data(from: url).0
+                cgImage = await Task.detached(priority: .utility) { data.flatMap(ThumbnailCache.decode(data:)) }.value
+            }
             guard !Task.isCancelled else { return }
             if let cgImage {
                 let decoded = NSImage(cgImage: cgImage, size: .zero)
@@ -499,7 +560,14 @@ private enum ThumbnailCache {
 
     /// First frame, downscaled to fit the largest card at 2x.
     nonisolated static func decode(_ url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        CGImageSourceCreateWithURL(url as CFURL, nil).flatMap(thumbnail)
+    }
+
+    nonisolated static func decode(data: Data) -> CGImage? {
+        CGImageSourceCreateWithData(data as CFData, nil).flatMap(thumbnail)
+    }
+
+    private nonisolated static func thumbnail(from source: CGImageSource) -> CGImage? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

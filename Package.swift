@@ -6,6 +6,12 @@ import Foundation
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let vendoredRoot = "\(packageRoot)/linux-wallpaperengine"
 let buildRoot = "\(packageRoot)/build"
+/// The Steamworks SDK is optional and never vendored. When its headers are
+/// present (STEAMWORKS_SDK, or ~/sdk), the Workshop helper is built; it loads
+/// libsteam_api.dylib at runtime from the path the app passes it.
+let steamworksSDK = ProcessInfo.processInfo.environment["STEAMWORKS_SDK"]
+    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("sdk").path
+let hasSteamworksSDK = FileManager.default.fileExists(atPath: "\(steamworksSDK)/public/steam/steam_api_flat.h")
 
 let package = Package(
     name: "macOS-wallpaperengine",
@@ -14,6 +20,10 @@ let package = Package(
         .testTarget(
             name: "WallpaperEngineTests",
             dependencies: ["WallpaperEngine"]
+        ),
+        .testTarget(
+            name: "SteamLibraryTests",
+            dependencies: ["SteamLibrary"]
         ),
         .testTarget(
             name: "NativeSceneRendererTests",
@@ -26,6 +36,10 @@ let package = Package(
         .target(
             name: "NativeSceneCore",
             path: "Sources/NativeSceneCore"
+        ),
+        .target(
+            name: "SteamLibrary",
+            path: "Sources/SteamLibrary"
         ),
         .target(
             name: "CShaderCompiler",
@@ -132,7 +146,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "WallpaperEngine",
-            dependencies: ["NativeSceneCore", "NativeSceneBridge", "NativeSceneCompatibility", "NativeSceneRuntime", "NativeSceneRenderer"],
+            dependencies: ["NativeSceneCore", "NativeSceneBridge", "NativeSceneCompatibility", "NativeSceneRuntime", "NativeSceneRenderer", "SteamLibrary"],
             path: "Sources/WallpaperEngine",
             exclude: ["WallpaperEngineInfo.plist"],
             linkerSettings: [
@@ -151,3 +165,13 @@ let package = Package(
         )
     ]
 )
+
+if hasSteamworksSDK {
+    package.targets.append(
+        .executableTarget(
+            name: "SteamWorkshopHelper",
+            path: "Sources/SteamWorkshopHelper",
+            cxxSettings: [.unsafeFlags(["-std=c++17", "-I\(steamworksSDK)/public"])]
+        )
+    )
+}

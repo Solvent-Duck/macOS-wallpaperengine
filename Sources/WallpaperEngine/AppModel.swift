@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import SteamLibrary
 
 /// Single source of truth for the app's UI surfaces (menu bar popover, settings,
 /// gallery, properties panel). Playback state lives in `DesktopWindowManager`;
@@ -31,7 +32,34 @@ final class AppModel {
     private(set) var recents: [RecentWallpaper] = []
     private(set) var libraryFolders: [URL] = []
     private(set) var usesCustomLibraryFolder = false
+    private(set) var showsWorkshopWallpapers = true
     private(set) var loginItemEnabled = false
+    /// Steam Workshop subscription counts; nil until the first Workshop scan.
+    private(set) var workshopStatus: WorkshopStatus?
+
+    /// Download subscriptions through a Steam session (Settings → Steam Workshop).
+    var workshopSyncEnabled: Bool {
+        get { access(keyPath: \.workshopSyncEnabled); return WorkshopSyncSettings.isEnabled }
+        set {
+            withMutation(keyPath: \.workshopSyncEnabled) { WorkshopSyncSettings.isEnabled = newValue }
+            workshopSync.downloadsSubscriptions = newValue
+            if newValue { workshopSync.sync() } else { workshopSync.stop() }
+        }
+    }
+
+    /// Which content ratings the Workshop browser shows.
+    var workshopRatingLevel: Int {
+        get { access(keyPath: \.workshopRatingLevel); return WorkshopSyncSettings.ratingLevel }
+        set { withMutation(keyPath: \.workshopRatingLevel) { WorkshopSyncSettings.ratingLevel = newValue } }
+    }
+
+    var settingsPane: SettingsView.Pane = .general
+
+    /// The Steamworks SDK folder holding `libsteam_api.dylib`.
+    var steamworksSDKFolder: URL {
+        get { access(keyPath: \.steamworksSDKFolder); return WorkshopSyncSettings.sdkFolder }
+        set { withMutation(keyPath: \.steamworksSDKFolder) { WorkshopSyncSettings.sdkFolder = newValue } }
+    }
 
     var restoresOnLaunch: Bool {
         get { access(keyPath: \.restoresOnLaunch); return recentStore.restoresOnLaunch }
@@ -49,11 +77,17 @@ final class AppModel {
     @ObservationIgnored private var settingsController: SettingsWindowController?
     @ObservationIgnored private var refreshTimer: Timer?
     @ObservationIgnored private var refreshClients = 0
+    @ObservationIgnored private var workshopWatcher: WorkshopFolderWatcher?
+    /// Observable itself; views read its phase and downloads directly.
+    @ObservationIgnored let workshopSync = WorkshopSync(launcher: WorkshopSyncSettings.launchHelper)
+    @ObservationIgnored private var workshopSyncTimer: Timer?
+    @ObservationIgnored private var lastAutomaticSync: Date?
 
     init(windowManager: DesktopWindowManager) {
         self.windowManager = windowManager
         refresh()
         library.recentPaths = { [weak self] in self?.recents.map(\.path) ?? [] }
+        workshopSync.downloadsSubscriptions = WorkshopSyncSettings.isEnabled
     }
 
     // MARK: - State
@@ -83,6 +117,8 @@ final class AppModel {
         if folders != libraryFolders { libraryFolders = folders }
         let custom = LibraryFolders.customDirectory != nil
         if custom != usesCustomLibraryFolder { usesCustomLibraryFolder = custom }
+        let workshop = LibraryFolders.showsWorkshopWallpapers
+        if workshop != showsWorkshopWallpapers { showsWorkshopWallpapers = workshop }
         if loginItem.isEnabled != loginItemEnabled { loginItemEnabled = loginItem.isEnabled }
     }
 
@@ -214,6 +250,104 @@ final class AppModel {
         }
     }
 
+    // MARK: - Steam Workshop
+
+    /// Follow Steam's Workshop folders for the app's lifetime, so items
+    /// Steam installs, updates or removes reach the library and the desktop
+    /// without a rescan, whether or not a window is open.
+    func startWorkshopMonitoring() {
+        guard workshopWatcher == nil else { return }
+        let watcher = WorkshopFolderWatcher()
+        watcher.start { [weak self] changes, status in
+            self?.applyWorkshopChanges(changes, status: status)
+        }
+        workshopWatcher = watcher
+
+        // Authors update items without the subscriptions changing, and only a
+        // Steam session finds those updates, so check periodically too.
+        workshopSyncTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.workshopSyncEnabled else { return }
+                self.workshopSync.sync()
+            }
+        }
+        if workshopSyncEnabled { workshopSync.sync() }
+    }
+
+    /// Turning sync on explains what it does first, since the first session
+    /// can download many gigabytes and shows the user as playing.
+    func setWorkshopSyncEnabled(_ enabled: Bool) {
+        guard enabled else {
+            workshopSyncEnabled = false
+            return
+        }
+        let missing = workshopItemsToDownload.count
+        let alert = NSAlert()
+        alert.messageText = "Download Steam Workshop subscriptions automatically?"
+        var details = "While syncing, Steam shows you as playing Wallpaper Engine. The session ends when downloads finish."
+        if missing > 0 {
+            let items = missing == 1 ? "1 subscribed item isn’t" : "\(missing) subscribed items aren’t"
+            details = "\(items) on this Mac yet. Steam will download them now, which can use a lot of disk space.\n\n" + details
+        }
+        alert.informativeText = details
+        alert.addButton(withTitle: "Turn On")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        workshopSyncEnabled = true
+    }
+
+    func chooseSteamworksSDKFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the unzipped Steamworks SDK folder (it contains “redistributable_bin”)"
+        panel.directoryURL = steamworksSDKFolder
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        steamworksSDKFolder = url
+        if workshopSyncEnabled, case .problem = workshopSync.phase { workshopSync.sync() }
+    }
+
+    func syncWorkshopNow() {
+        workshopSync.sync()
+    }
+
+    /// Subscribed items with no folder that haven't been found unavailable.
+    var workshopItemsToDownload: [String] {
+        (workshopStatus?.notDownloadedIDs ?? []).filter { !workshopSync.unavailableIDs.contains($0) }
+    }
+
+    func applyWorkshopChanges(_ changes: [WorkshopChange], status: WorkshopStatus) {
+        if status != workshopStatus { workshopStatus = status }
+        startSyncForNewSubscriptions()
+        for change in changes { library.refreshFolder(named: change.id) }
+
+        guard let active = windowManager.currentProject?.libraryPath,
+              let change = changes.first(where: { $0.folder.standardizedFileURL.path == active }) else { return }
+        switch change.kind {
+        case .updated:
+            // Saved properties and playback are keyed by folder name, so they survive the reload.
+            Task { await load(change.folder, reportsErrors: false) }
+        case .removed:
+            clearWallpaper()
+        case .added:
+            break
+        }
+    }
+
+    /// A subscription made on the website shows up in Steam's files before
+    /// it is downloaded; start a session to fetch it. Rate-limited so items
+    /// Steam keeps refusing can't cause a loop.
+    private func startSyncForNewSubscriptions() {
+        guard workshopSyncEnabled, !workshopSync.isRunning, !workshopItemsToDownload.isEmpty,
+              workshopSync.phase != .problem(.notOwned), workshopSync.phase != .problem(.helperMissing) else { return }
+        if let last = lastAutomaticSync, Date().timeIntervalSince(last) < 5 * 60 { return }
+        lastAutomaticSync = Date()
+        workshopSync.sync()
+    }
+
     // MARK: - Windows
 
     /// Open the library, optionally selecting a wallpaper by `libraryPath`.
@@ -223,6 +357,11 @@ final class AppModel {
             rescanLibrary()
         }
         galleryController.show(library: library, appModel: self)
+    }
+
+    func openWorkshopDownloads() {
+        library.filter = .downloads
+        openLibrary()
     }
 
     /// Show the current wallpaper's details and properties.
@@ -265,7 +404,8 @@ final class AppModel {
         )
     }
 
-    func openSettings() {
+    func openSettings(pane: SettingsView.Pane? = nil) {
+        if let pane { settingsPane = pane }
         if settingsController == nil { settingsController = SettingsWindowController(model: self) }
         settingsController?.show()
     }
@@ -285,7 +425,7 @@ final class AppModel {
 
     /// Create `~/Wallpaper Projects`, show it in Finder for copying wallpapers in, and rescan.
     func createDefaultLibraryFolder() {
-        guard let folder = LibraryFolders.defaultDirectories.first else { return }
+        let folder = LibraryFolders.projectsDirectory
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.activateFileViewerSelecting([folder])
@@ -296,8 +436,14 @@ final class AppModel {
         refresh()
     }
 
-    func useDefaultLibraryFolders() {
-        LibraryFolders.useDefaults()
+    func removeAddedLibraryFolder() {
+        LibraryFolders.removeCustomFolder()
+        rescanLibrary()
+        refresh()
+    }
+
+    func setShowsWorkshopWallpapers(_ shows: Bool) {
+        LibraryFolders.showsWorkshopWallpapers = shows
         rescanLibrary()
         refresh()
     }

@@ -1,4 +1,5 @@
 import AppKit
+import SteamLibrary
 import SwiftUI
 
 @MainActor
@@ -40,15 +41,15 @@ struct SettingsView: View {
     enum Pane: String, CaseIterable {
         case general = "General"
         case audioMedia = "Audio & Media"
+        case workshop = "Steam Workshop"
         case advanced = "Advanced"
     }
 
-    let model: AppModel
-    @State var pane: Pane = .general
+    @Bindable var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $pane) {
+            Picker("", selection: $model.settingsPane) {
                 ForEach(Pane.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -56,9 +57,10 @@ struct SettingsView: View {
             .fixedSize()
             .padding(.top, 14)
 
-            switch pane {
+            switch model.settingsPane {
             case .general: GeneralSettings(model: model)
             case .audioMedia: AudioMediaSettings(model: model)
+            case .workshop: WorkshopSettings(model: model, sync: model.workshopSync)
             case .advanced: AdvancedSettings(model: model)
             }
         }
@@ -89,8 +91,12 @@ private struct GeneralSettings: View {
             } footer: {
                 Text("With more than one display connected, the same wallpaper is shown on every display. Choosing a wallpaper per display isn’t available.")
             }
-            Section("Wallpaper Library") {
-                LabeledContent(model.usesCustomLibraryFolder ? "Folder" : "Folders") {
+            Section {
+                Toggle("Show Steam Workshop wallpapers", isOn: Binding(
+                    get: { model.showsWorkshopWallpapers },
+                    set: { model.setShowsWorkshopWallpapers($0) }
+                ))
+                LabeledContent("Folders") {
                     VStack(alignment: .trailing, spacing: 2) {
                         if model.libraryFolders.isEmpty {
                             Text("None found").foregroundStyle(.secondary)
@@ -106,13 +112,99 @@ private struct GeneralSettings: View {
                 HStack {
                     Spacer()
                     if model.usesCustomLibraryFolder {
-                        Button("Use Default Folders") { model.useDefaultLibraryFolders() }
+                        Button("Remove Added Folder") { model.removeAddedLibraryFolder() }
                     }
-                    Button("Choose Folder…") { model.chooseLibraryFolder() }
+                    Button(model.usesCustomLibraryFolder ? "Change Added Folder…" : "Add Folder…") { model.chooseLibraryFolder() }
                 }
+            } header: {
+                Text("Wallpaper Library")
+            } footer: {
+                Text("Steam Workshop folders come first, so a subscribed wallpaper always uses Steam’s up-to-date copy even if another folder has one too.")
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct WorkshopSettings: View {
+    let model: AppModel
+    let sync: WorkshopSync
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Subscriptions") {
+                    if let subscribed = model.workshopStatus?.subscribed {
+                        Text(workshopSummary(subscribed: subscribed, notDownloaded: model.workshopItemsToDownload.count))
+                    } else {
+                        Text("Steam not found").foregroundStyle(.secondary)
+                    }
+                }
+                Toggle("Download subscriptions automatically", isOn: Binding(
+                    get: { model.workshopSyncEnabled },
+                    set: { model.setWorkshopSyncEnabled($0) }
+                ))
+                LabeledContent("Status") {
+                    HStack(spacing: 6) {
+                        if sync.isRunning { ProgressView().controlSize(.small) }
+                        Text(workshopSyncStatus(sync, enabled: model.workshopSyncEnabled))
+                            .foregroundStyle(isProblem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    if !sync.unavailableIDs.isEmpty {
+                        Button("Retry Unavailable (\(sync.unavailableIDs.count))") { sync.retryUnavailable() }
+                            .help("Items Steam refused, usually because they were removed or made private")
+                    }
+                    Button("Sync Now") { model.syncWorkshopNow() }
+                        .disabled(!model.workshopSyncEnabled || sync.isRunning)
+                }
+            } header: {
+                Text("Subscriptions")
+            } footer: {
+                Text("Syncing starts a short Steam session as Wallpaper Engine, so Steam shows you as playing it until downloads finish.")
+            }
+
+            Section {
+                Picker("Show in Browse", selection: Binding(
+                    get: { model.workshopRatingLevel },
+                    set: { model.workshopRatingLevel = $0 }
+                )) {
+                    Text("Everyone").tag(0)
+                    Text("Everyone and Questionable").tag(1)
+                    Text("Everything, including Mature").tag(2)
+                }
+            } header: {
+                Text("Browsing")
+            } footer: {
+                Text("Uses the content rating authors give their wallpapers on the Workshop.")
+            }
+
+            Section {
+                LabeledContent("Folder") {
+                    Text(abbreviated(model.steamworksSDKFolder.path))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(model.steamworksSDKFolder.path)
+                }
+                HStack {
+                    Spacer()
+                    Button("Choose Folder…") { model.chooseSteamworksSDKFolder() }
+                }
+            } header: {
+                Text("Steamworks SDK")
+            } footer: {
+                Text("Syncing uses Valve’s Steamworks SDK, which can’t be included with this app. Download it from partner.steamgames.com and choose the folder you unzipped it to.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var isProblem: Bool {
+        if case .problem = sync.phase { return true }
+        return false
     }
 }
 
@@ -181,4 +273,36 @@ private struct AdvancedSettings: View {
 
 private func abbreviated(_ path: String) -> String {
     (path as NSString).abbreviatingWithTildeInPath
+}
+
+func workshopSummary(subscribed: Int, notDownloaded: Int) -> String {
+    let items = subscribed == 1 ? "1 subscription" : "\(subscribed) subscriptions"
+    return notDownloaded == 0 ? items : "\(items), \(notDownloaded) not downloaded"
+}
+
+@MainActor
+func workshopSyncStatus(_ sync: WorkshopSync, enabled: Bool) -> String {
+    switch sync.phase {
+    case .problem(let problem):
+        return workshopProblemMessage(problem)
+    case .syncing:
+        let active = sync.activeDownloads
+        guard !active.isEmpty else { return "Connected to Steam" }
+        let done = active.reduce(UInt64(0)) { total, item in
+            if case .downloading(let downloaded, _) = item.status { return total + downloaded }
+            return total
+        }
+        let size = active.reduce(UInt64(0)) { total, item in
+            if case .downloading(_, let bytes) = item.status { return total + bytes }
+            return total + (item.size ?? 0)
+        }
+        let items = active.count == 1 ? "1 item" : "\(active.count) items"
+        guard size > 0 else { return "Downloading \(items)…" }
+        let format = ByteCountFormatter()
+        return "Downloading \(items) · \(format.string(fromByteCount: Int64(done))) of \(format.string(fromByteCount: Int64(size)))"
+    case .idle:
+        guard enabled else { return "Off" }
+        guard let last = sync.lastSync else { return "Not synced yet" }
+        return "Up to date · synced \(last.formatted(.relative(presentation: .named)))"
+    }
 }
