@@ -39,6 +39,9 @@ public enum ShaderPipeline {
             discoveredCombos: discoveredCombos
         )
 
+        vertexBody = Self.neutralizeRuntimeConditions(in: vertexBody)
+        fragmentBody = Self.neutralizeRuntimeConditions(in: fragmentBody)
+
         // Combos referenced by includes (e.g. `#if LIGHTING` in common
         // headers) may never be annotated or supplied; glslang aborts on
         // undefined macros in #if expressions, so default them to 0.
@@ -66,7 +69,9 @@ public enum ShaderPipeline {
         // retry, advancing through candidate occurrences on repeats.
         let metal: MetalShaderCompilation
         var repairOccurrences: [String: Int] = [:]
-        var repairsRemaining = 12
+        // glslang stops at the first error, so a shader full of HLSL-isms
+        // (e.g. a dozen runtime consts) needs one retry per repair.
+        var repairsRemaining = 48
         while true {
             do {
                 metal = try MetalShaderCompiler.compile(vertex: vertexGLSL, fragment: fragmentGLSL)
@@ -84,6 +89,7 @@ public enum ShaderPipeline {
                 ) ?? ShaderScalarConditionRepair.attempt(message: message, vertexGLSL: vertexGLSL, fragmentGLSL: fragmentGLSL)
                     ?? ShaderInputMutationRepair.attempt(message: message, vertexGLSL: vertexGLSL, fragmentGLSL: fragmentGLSL)
                     ?? ShaderLocalConstantRepair.attempt(message: message, vertexGLSL: vertexGLSL, fragmentGLSL: fragmentGLSL)
+                    ?? ShaderGlobalConstantRepair.attempt(message: message, vertexGLSL: vertexGLSL, fragmentGLSL: fragmentGLSL)
                     ?? ShaderScalarInitializerRepair.attempt(message: message, vertexGLSL: vertexGLSL, fragmentGLSL: fragmentGLSL)
                     ?? ShaderEmptyFunctionRepair.attempt(message: message, vertexGLSL: vertexGLSL, fragmentGLSL: fragmentGLSL) else {
                     try dumpAndRethrow(
@@ -282,6 +288,27 @@ public enum ShaderPipeline {
             return text
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Some workshop shaders test runtime values in preprocessor conditions
+    /// (`#if g_Texture0Resolution.x < g_Texture0Resolution.y`). Member access
+    /// can never be evaluated by the preprocessor; treat the condition as
+    /// false, as if those values were 0. Defaulting the names to 0 instead
+    /// would redefine the uniform and every `.x`/`.y` swizzle in the shader.
+    static func neutralizeRuntimeConditions(in body: String) -> String {
+        guard body.contains("#if") || body.contains("#elif"),
+              let memberAccess = try? NSRegularExpression(pattern: #"[A-Za-z_][A-Za-z0-9_]*\s*\.\s*[A-Za-z_]"#) else { return body }
+        var changed = false
+        let lines = body.components(separatedBy: "\n").map { line -> String in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let keyword = trimmed.hasPrefix("#if ") ? "#if" : trimmed.hasPrefix("#elif ") ? "#elif" : nil
+            guard let keyword else { return line }
+            let code = trimmed.components(separatedBy: "//")[0]
+            guard memberAccess.firstMatch(in: code, range: NSRange(code.startIndex..<code.endIndex, in: code)) != nil else { return line }
+            changed = true
+            return "\(keyword) 0 // runtime condition: \(code.dropFirst(keyword.count).trimmingCharacters(in: .whitespaces))"
+        }
+        return changed ? lines.joined(separator: "\n") : body
     }
 
     private static func undefinedConditionalMacros(
