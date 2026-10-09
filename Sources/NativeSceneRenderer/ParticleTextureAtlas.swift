@@ -85,10 +85,11 @@ struct ParticleTextureAtlas: Equatable {
         guard !capacity.overflow, capacity.partialValue >= count,
               abs(Float(columns) * frameWidth - Float(width)) <= Self.alignmentSlack,
               abs(Float(rows) * frameHeight - Float(height)) <= Self.alignmentSlack else { return nil }
-        for (index, frame) in frames.enumerated() {
-            guard abs(frame[1] - Float(index % columns) * frameWidth) < 0.01,
-                  abs(frame[2] - Float(index / columns) * frameHeight) < 0.01,
-                  frame[3] == frameWidth, frame[6] == frameHeight,
+        // The particle shader derives each cell from the frame size and index
+        // alone, so stored x/y offsets are not validated: stock sheets such as
+        // leaves6 (a 6x5 grid) carry offsets for a different column count.
+        for frame in frames {
+            guard frame[3] == frameWidth, frame[6] == frameHeight,
                   frame[4] == 0, frame[5] == 0 else { return nil }
         }
         let duration = frames.reduce(Float(0)) { $0 + $1[0] }
