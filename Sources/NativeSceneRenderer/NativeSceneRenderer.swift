@@ -128,6 +128,7 @@ public final class NativeSceneRenderer {
         (textRenderer.cachedNodeCount, materialBinder.controlledVideoPlayerCount, effectTargetHistory.count)
     }
     private var effectTextureFormats: [ObjectIdentifier: EffectRenderTargetFormat] = [:]
+    private var sharedSceneEncoder: (encoder: MTLRenderCommandEncoder, target: MTLTexture, commandBuffer: MTLCommandBuffer)?
 
     private struct RenderTextureKey: Hashable {
         let width: Int
@@ -408,6 +409,7 @@ public final class NativeSceneRenderer {
            !filter.contains(where: { label.hasPrefix($0) }) {
             return
         }
+        endSharedSceneEncoder()
         // The public debug buffers are RGBA8 previews. Convert numerical
         // targets before readback instead of interpreting half floats as bytes.
         let texture = materialBinder.sampledTexture(for: texture)
@@ -450,6 +452,7 @@ public final class NativeSceneRenderer {
         guard let graph = scene.scene else {
             throw NativeSceneRendererError.missingSceneGraph
         }
+        defer { endSharedSceneEncoder() }
         debugStageDumps.removeAll()
         effectTextureFormats.removeAll(keepingCapacity: true)
         materialBinder.resetEffectTextureViews()
@@ -480,6 +483,7 @@ public final class NativeSceneRenderer {
             clear.depthAttachment.loadAction = .clear
             clear.depthAttachment.storeAction = .store
             clear.depthAttachment.clearDepth = 1
+            endSharedSceneEncoder()
             guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: clear) else { throw NativeSceneRendererError.commandEncodingFailed }
             encoder.endEncoding()
         }
@@ -597,6 +601,7 @@ public final class NativeSceneRenderer {
             }
         }
 
+        endSharedSceneEncoder()
         do {
             try postProcessPass.finalize(
                 packet: packet,
@@ -624,11 +629,7 @@ public final class NativeSceneRenderer {
         viewportSize: CGSize,
         commandBuffer: MTLCommandBuffer
     ) throws {
-        let descriptor = renderPassDescriptor(for: destinationScene, loadAction: .load)
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
-            throw NativeSceneRendererError.commandEncodingFailed
-        }
-        defer { encoder.endEncoding() }
+        let encoder = try sceneEncoder(for: destinationScene, commandBuffer: commandBuffer)
 
         try renderParticleSystemTree(
             system: particleSystem,
@@ -793,6 +794,7 @@ public final class NativeSceneRenderer {
                 descriptor.depthAttachment.loadAction = clearDepth ? .clear : .load
                 descriptor.depthAttachment.clearDepth = 1
                 descriptor.depthAttachment.storeAction = .store
+                endSharedSceneEncoder()
                 guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
                     throw NativeSceneRendererError.commandEncodingFailed
                 }
@@ -1027,12 +1029,19 @@ public final class NativeSceneRenderer {
                 }
                 renderedScene = targetTexture
             }
-            let descriptor = renderPassDescriptor(for: targetTexture, loadAction: loadAction)
             do {
-                guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
-                    throw NativeSceneRendererError.commandEncodingFailed
+                let encoder: MTLRenderCommandEncoder
+                if isScenePass {
+                    encoder = try sceneEncoder(for: targetTexture, commandBuffer: commandBuffer)
+                } else {
+                    endSharedSceneEncoder()
+                    guard let offscreen = commandBuffer.makeRenderCommandEncoder(
+                        descriptor: renderPassDescriptor(for: targetTexture, loadAction: loadAction)) else {
+                        throw NativeSceneRendererError.commandEncodingFailed
+                    }
+                    encoder = offscreen
                 }
-                defer { encoder.endEncoding() }
+                defer { if !isScenePass { encoder.endEncoding() } }
 
                 try lightingPass.prepare(packet: packet, encoder: encoder)
                 try materialBinder.bind(
@@ -1224,6 +1233,29 @@ public final class NativeSceneRenderer {
         ]
     }
 
+    /// Consecutive draws that blend onto the same scene texture share one
+    /// render pass. A tile-based GPU loads and stores the whole target for
+    /// every pass, so a pass per layer, particle system or text quad dominated
+    /// GPU time in busy scenes. Every other encoder must call
+    /// `endSharedSceneEncoder()` first; draws and their order are unchanged.
+    private func sceneEncoder(for target: MTLTexture, commandBuffer: MTLCommandBuffer) throws -> MTLRenderCommandEncoder {
+        if let shared = sharedSceneEncoder, shared.target === target, shared.commandBuffer === commandBuffer {
+            return shared.encoder
+        }
+        endSharedSceneEncoder()
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(
+            descriptor: renderPassDescriptor(for: target, loadAction: .load)) else {
+            throw NativeSceneRendererError.commandEncodingFailed
+        }
+        sharedSceneEncoder = (encoder, target, commandBuffer)
+        return encoder
+    }
+
+    private func endSharedSceneEncoder() {
+        sharedSceneEncoder?.encoder.endEncoding()
+        sharedSceneEncoder = nil
+    }
+
     private func renderPassDescriptor(for texture: MTLTexture, loadAction: MTLLoadAction) -> MTLRenderPassDescriptor {
         let descriptor = MTLRenderPassDescriptor()
         descriptor.colorAttachments[0].texture = texture
@@ -1240,6 +1272,7 @@ public final class NativeSceneRenderer {
         color: RuntimeVector4,
         commandBuffer: MTLCommandBuffer
     ) throws {
+        endSharedSceneEncoder()
         let descriptor = renderPassDescriptor(for: texture, loadAction: .clear)
         descriptor.colorAttachments[0].clearColor = MTLClearColor(
             red: Double(color.x),
@@ -1259,6 +1292,7 @@ public final class NativeSceneRenderer {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard source !== destination else { return }
+        endSharedSceneEncoder()
         let sampledSource = materialBinder.sampledTexture(for: source)
         if source.pixelFormat != destination.pixelFormat || sampledSource !== source {
             // Native blits require identical formats and do not apply channel
@@ -1438,6 +1472,7 @@ public final class NativeSceneRenderer {
         }
         try copyTexture(from: source, to: texture, commandBuffer: commandBuffer)
         if texture.mipmapLevelCount > 1 {
+            endSharedSceneEncoder()
             guard let blit = commandBuffer.makeBlitCommandEncoder() else { throw NativeSceneRendererError.commandEncodingFailed }
             blit.generateMipmaps(for: texture)
             blit.endEncoding()
@@ -1468,11 +1503,7 @@ public final class NativeSceneRenderer {
         destinationScene: MTLTexture,
         commandBuffer: MTLCommandBuffer
     ) throws {
-        let descriptor = renderPassDescriptor(for: destinationScene, loadAction: .load)
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
-            throw NativeSceneRendererError.commandEncodingFailed
-        }
-        defer { encoder.endEncoding() }
+        let encoder = try sceneEncoder(for: destinationScene, commandBuffer: commandBuffer)
 
         try textRenderer.render(
             texts: texts,
@@ -1588,6 +1619,7 @@ public final class NativeSceneRenderer {
                 bindingContext: bindingContext, colorAttachmentPixelFormat: targetTexture.pixelFormat)
             bindingContext = try reflectionBindingContext(bindingContext, preparedPass: preparedPass,
                 sceneTexture: currentScene, commandBuffer: commandBuffer, textureBinds: step.binds)
+            endSharedSceneEncoder()
             let descriptor = renderPassDescriptor(for: targetTexture, loadAction: loadAction)
             guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
                 throw NativeSceneRendererError.commandEncodingFailed
@@ -1622,11 +1654,7 @@ public final class NativeSceneRenderer {
 
         retainEffectTargets(effectTargets)
 
-        let descriptor = renderPassDescriptor(for: destinationScene, loadAction: .load)
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
-            throw NativeSceneRendererError.commandEncodingFailed
-        }
-        defer { encoder.endEncoding() }
+        let encoder = try sceneEncoder(for: destinationScene, commandBuffer: commandBuffer)
         try textRenderer.renderQuad(
             text: text,
             texture: chainInput,
