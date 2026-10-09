@@ -32,6 +32,7 @@ final class AppModel {
     private(set) var recents: [RecentWallpaper] = []
     private(set) var libraryFolders: [URL] = []
     private(set) var usesCustomLibraryFolder = false
+    private(set) var showsWorkshopWallpapers = true
     private(set) var loginItemEnabled = false
     /// Steam Workshop subscription counts; nil until the first Workshop scan.
     private(set) var workshopStatus: WorkshopStatus?
@@ -116,6 +117,8 @@ final class AppModel {
         if folders != libraryFolders { libraryFolders = folders }
         let custom = LibraryFolders.customDirectory != nil
         if custom != usesCustomLibraryFolder { usesCustomLibraryFolder = custom }
+        let workshop = LibraryFolders.showsWorkshopWallpapers
+        if workshop != showsWorkshopWallpapers { showsWorkshopWallpapers = workshop }
         if loginItem.isEnabled != loginItemEnabled { loginItemEnabled = loginItem.isEnabled }
     }
 
@@ -422,7 +425,7 @@ final class AppModel {
 
     /// Create `~/Wallpaper Projects`, show it in Finder for copying wallpapers in, and rescan.
     func createDefaultLibraryFolder() {
-        guard let folder = LibraryFolders.defaultDirectories.first else { return }
+        let folder = LibraryFolders.projectsDirectory
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.activateFileViewerSelecting([folder])
@@ -433,8 +436,14 @@ final class AppModel {
         refresh()
     }
 
-    func useDefaultLibraryFolders() {
-        LibraryFolders.useDefaults()
+    func removeAddedLibraryFolder() {
+        LibraryFolders.removeCustomFolder()
+        rescanLibrary()
+        refresh()
+    }
+
+    func setShowsWorkshopWallpapers(_ shows: Bool) {
+        LibraryFolders.showsWorkshopWallpapers = shows
         rescanLibrary()
         refresh()
     }

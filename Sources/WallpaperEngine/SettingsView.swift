@@ -92,7 +92,11 @@ private struct GeneralSettings: View {
                 Text("With more than one display connected, the same wallpaper is shown on every display. Choosing a wallpaper per display isn’t available.")
             }
             Section {
-                LabeledContent(model.usesCustomLibraryFolder ? "Folder" : "Folders") {
+                Toggle("Show Steam Workshop wallpapers", isOn: Binding(
+                    get: { model.showsWorkshopWallpapers },
+                    set: { model.setShowsWorkshopWallpapers($0) }
+                ))
+                LabeledContent("Folders") {
                     VStack(alignment: .trailing, spacing: 2) {
                         if model.libraryFolders.isEmpty {
                             Text("None found").foregroundStyle(.secondary)
@@ -108,12 +112,14 @@ private struct GeneralSettings: View {
                 HStack {
                     Spacer()
                     if model.usesCustomLibraryFolder {
-                        Button("Use Default Folders") { model.useDefaultLibraryFolders() }
+                        Button("Remove Added Folder") { model.removeAddedLibraryFolder() }
                     }
-                    Button("Choose Folder…") { model.chooseLibraryFolder() }
+                    Button(model.usesCustomLibraryFolder ? "Change Added Folder…" : "Add Folder…") { model.chooseLibraryFolder() }
                 }
             } header: {
                 Text("Wallpaper Library")
+            } footer: {
+                Text("Steam Workshop folders come first, so a subscribed wallpaper always uses Steam’s up-to-date copy even if another folder has one too.")
             }
         }
         .formStyle(.grouped)

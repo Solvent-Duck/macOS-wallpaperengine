@@ -231,15 +231,15 @@ struct GalleryView: View {
                         .map { ($0.path as NSString).abbreviatingWithTildeInPath }
                         .joined(separator: " and ") + ".")
                 }
-                Text("Subscribe to wallpapers in Wallpaper Engine’s Steam Workshop, then copy their folders into ~/Wallpaper Projects — or choose the folder that already holds them. You can also drop a wallpaper folder or video here to apply it.")
+                Text("Wallpapers you subscribe to in Wallpaper Engine’s Steam Workshop appear here once Steam downloads them. You can also copy wallpaper folders into ~/Wallpaper Projects, add another folder, or drop a wallpaper folder or video here to apply it.")
             }
         } actions: {
             if appModel.canCreateDefaultLibraryFolder {
                 Button("Create Wallpaper Projects Folder") { appModel.createDefaultLibraryFolder() }
                     .buttonStyle(.borderedProminent)
-                Button("Choose Folder…") { appModel.chooseLibraryFolder() }
+                Button("Add Folder…") { appModel.chooseLibraryFolder() }
             } else {
-                Button("Choose Folder…") { appModel.chooseLibraryFolder() }
+                Button("Add Folder…") { appModel.chooseLibraryFolder() }
                     .buttonStyle(.borderedProminent)
                 Button("Rescan") { appModel.rescanLibrary() }
             }

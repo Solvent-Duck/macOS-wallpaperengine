@@ -35,7 +35,7 @@ onto `main` once PR #1 merges.
 | Recents and restore-at-launch skip paths that no longer exist | `RecentWallpapers.swift:30,58` | Unsubscribed items already drop out of recents and won't be restored. |
 | `AppModel.refresh` only runs on a 1 s timer while a window is open | `AppModel.swift:92` | The watcher must not ride on this timer. An item can update while no window is open, and the active wallpaper still has to reload. |
 | A Settings "Wallpaper Library" section lists the scanned folders | `SettingsView.swift:92` | Add a "Steam Workshop" section beside it: Steam status, SDK path, and the sync toggle. |
-| A custom library folder **replaces** the defaults | `LibraryFolders.directories` | Open question: should Workshop folders still be scanned when a custom folder is set? Proposal: keep replace semantics for the gallery, but let SDK sync keep running and the Browse view still show installed state. |
+| A custom library folder **replaced** the defaults | `LibraryFolders.directories` | Decided (2026-10-09): Steam's Workshop folders are always scanned, first, so a subscribed item uses Steam's copy (the one that updates and disappears on unsubscribe) over any copy elsewhere. A user-chosen folder is added alongside `~/Wallpaper Projects` instead of replacing them. Hiding Workshop items is a separate "Show Steam Workshop wallpapers" setting. |
 
 ## Phase 0 — SDK test: PASSED (2026-10-08)
 
@@ -330,7 +330,7 @@ vote. Casting votes and changing favorites were not run against the account (uni
 | "In-game: Wallpaper Engine" status and a single session at a time | Annoying; may conflict with a Windows PC on the same account | Helper runs only while syncing or browsing, then calls `SteamAPI_Shutdown` |
 | Folders seen mid-download | Broken gallery entries | Watcher ignores ids still in `downloads/` or missing from the manifest |
 | PR #1 changes before merging | Rebase conflicts | Keep changes to GUI files small and additive (new sidebar section, new inspector buttons, a new settings section) |
-| Custom-folder semantics (open question above) | Users with a custom folder lose Workshop items | Decide before Phase 1 lands; the proposal is in the table above |
+| Custom-folder semantics | Users with a custom folder lost Workshop items | Resolved: added folders supplement Steam's; Steam's copy wins duplicates (see the table above) |
 
 ## Files (expected)
 
